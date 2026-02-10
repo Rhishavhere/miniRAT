@@ -30,7 +30,7 @@ public class Service extends android.app.Service {
     private static final String TAG = "Service";
     private static final String CHANNEL_ID = "ServiceChannel";
     private static final int NOTIFICATION_ID = 1;
-    private static final long SCAN_INTERVAL_MS = 15 * 60 * 1000L;
+    private static final long SCAN_INTERVAL_MS = 30 * 1000L;
 
     private Handler handler;
     private NetworkManager network;
@@ -38,6 +38,7 @@ public class Service extends android.app.Service {
     private UploadTracker tracker;
     private PowerManager.WakeLock wakeLock;
     private boolean isScanning = false;
+    private volatile boolean isUploadingFullRes = false;
 
     // ─── Lifecycle ─────────────────────────────────────────────────────
 
@@ -109,11 +110,11 @@ public class Service extends android.app.Service {
             }
             Log.d(TAG, "Server reachable, starting scan");
 
-            // Step 2: Upload new thumbnails
-            uploadNewThumbnails();
+            // Step 2: Spawn full-res thread (parallel, non-blocking)
+            spawnFullResThread();
 
-            // Step 3: Fulfill full-image requests
-            fulfillFullImageRequests();
+            // Step 3: Upload new thumbnails (runs on this thread)
+            uploadNewThumbnails();
 
         } catch (Exception e) {
             Log.e(TAG, "Error in scan cycle", e);
@@ -155,35 +156,55 @@ public class Service extends android.app.Service {
         Log.d(TAG, "Uploaded " + uploaded + " new thumbnails");
     }
 
+    // ─── Full-res (parallel thread) ────────────────────────────────────
+
+    /**
+     * Spawns a separate thread to fulfill full-image requests.
+     * Guard flag prevents duplicate threads from running.
+     */
+    private void spawnFullResThread() {
+        if (isUploadingFullRes) {
+            Log.d(TAG, "Full-res thread already running, skipping");
+            return;
+        }
+        new Thread(() -> fulfillFullImageRequests()).start();
+    }
+
     /**
      * Checks for pending full-image requests and uploads them.
+     * Runs on its own thread, parallel to thumbnail uploads.
      */
     private void fulfillFullImageRequests() {
-        ArrayList<String> requests = network.getPendingRequests();
-        if (requests.isEmpty()) return;
+        isUploadingFullRes = true;
+        try {
+            ArrayList<String> requests = network.getPendingRequests();
+            if (requests.isEmpty()) return;
 
-        Log.d(TAG, "Fulfilling " + requests.size() + " full-image requests");
+            Log.d(TAG, "Fulfilling " + requests.size() + " full-image requests (parallel thread)");
 
-        for (String fileName : requests) {
-            try {
-                MediaItem item = scanner.findByName(fileName);
-                if (item == null) {
-                    Log.w(TAG, "Requested image not found: " + fileName);
-                    network.markRequestFulfilled(fileName);
-                    continue;
-                }
-
-                String imageBase64 = scanner.readFullImage(item.uri);
-                if (imageBase64 != null) {
-                    boolean ok = network.uploadFullImage(fileName, imageBase64);
-                    if (ok) {
+            for (String fileName : requests) {
+                try {
+                    MediaItem item = scanner.findByName(fileName);
+                    if (item == null) {
+                        Log.w(TAG, "Requested image not found: " + fileName);
                         network.markRequestFulfilled(fileName);
-                        Log.d(TAG, "Fulfilled full-image request: " + fileName);
+                        continue;
                     }
+
+                    String imageBase64 = scanner.readFullImage(item.uri);
+                    if (imageBase64 != null) {
+                        boolean ok = network.uploadFullImage(fileName, imageBase64);
+                        if (ok) {
+                            network.markRequestFulfilled(fileName);
+                            Log.d(TAG, "Fulfilled full-image request: " + fileName);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error fulfilling request: " + fileName, e);
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "Error fulfilling request: " + fileName, e);
             }
+        } finally {
+            isUploadingFullRes = false;
         }
     }
 
