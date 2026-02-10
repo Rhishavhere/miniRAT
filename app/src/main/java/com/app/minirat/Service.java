@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
+import android.content.pm.ServiceInfo;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
@@ -64,7 +65,11 @@ public class Service extends android.app.Service {
         Log.d(TAG, "Service started");
 
         // Start as a foreground service (required on Android 8+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+ requires specifying the foreground service type
+            startForeground(NOTIFICATION_ID, createNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForeground(NOTIFICATION_ID, createNotification());
         }
 
