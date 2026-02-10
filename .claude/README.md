@@ -1,6 +1,6 @@
 # miniRAT
 
-> A minimal Android Remote Access Trojan for educational and security research purposes. Demonstrates covert gallery thumbnail exfiltration to a remote C2 server.
+> Minimal Android RAT for educational and security research. Covert gallery exfiltration with on-demand full-image retrieval.
 
 ---
 
@@ -8,63 +8,28 @@
 
 | Component | Technology | Description |
 |---|---|---|
-| **Android Client** | Java, Android SDK (API 21–36) | Stealth app that periodically scans the device gallery, checks if the C2 server is reachable, and uploads only new thumbnail previews. Hides from app drawer after first use. |
-| **C2 Server** | Node.js, Express.js | Receives uploaded thumbnails, stores on disk, and serves a live gallery dashboard with 3-second auto-refresh. |
+| **Android Client** | Java, Android SDK 21–36 | Stealth app: periodic gallery scan, thumbnail upload, full-image on-demand |
+| **C2 Server** | Node.js, Express.js | Thumbnail receiver, full-image request queue, live gallery dashboard |
 
 ---
 
 ## Features
 
 ### Android Client
-- **Zero-UI Launch** — Invisible activity: requests permission, starts service, hides from drawer, finishes.
-- **Periodic Scan** — Every 15 minutes, checks for new photos using a Handler-based timer.
-- **Server-Aware** — Pings the server (HEAD request) before scanning. If unreachable, stays idle and retries next cycle.
-- **Deduplication** — Tracks uploaded MediaStore IDs in SharedPreferences. Never re-uploads the same image.
-- **Smart Failure Handling** — If upload fails mid-scan, stops immediately and retries remaining images next cycle.
-- **All Image Formats** — Queries MediaStore without MIME filter (JPEG, PNG, WEBP, GIF, HEIC, BMP, etc.)
-- **Memory-Efficient** — `inSampleSize` for downsampled decoding + `bitmap.recycle()`.
-- **WakeLock** — Keeps CPU active during scan even with screen off. Released immediately after.
-- **Foreground Service** — With `dataSync` type for Android 14+ compatibility.
-- **Boot Persistence** — `BootReceiver` + `START_STICKY` for maximum uptime.
+- **Modular architecture** — 5 classes with single responsibilities
+- **Periodic scan** — Every 15 min with server reachability check
+- **Deduplication** — SharedPreferences tracks uploaded MediaStore IDs
+- **Thumbnail upload** — 128×128 JPEG at 70% quality (~10 KB each)
+- **Full-image on-demand** — Polls server for requests, uploads full-res
+- **Zero UI** — Auto-hides from launcher after first run
+- **WakeLock** — CPU active during scan, released after
+- **Boot persistence** — BootReceiver + START_STICKY
 
 ### C2 Server
-- **Thumbnail Receiver** — Accepts Base64-encoded thumbnails via POST, saves as JPEG.
-- **Live Dashboard** — Dark-themed gallery with 3-second auto-refresh and live status indicator.
-- **Metadata Tracking** — JSON metadata with original filename and upload timestamp.
-
----
-
-## How It Works
-
-```
-Every 15 minutes:
-  1. HEAD /api/thumbnails → Server reachable?
-     ├── NO  → Skip cycle, retry in 15 min
-     └── YES → Continue
-  2. Load uploaded IDs from SharedPreferences
-  3. Query MediaStore for all images
-  4. Filter: new images = total - already uploaded
-  5. For each new image:
-     ├── Create 128×128 thumbnail (JPEG 70%)
-     ├── POST { filename, thumbnail } to server
-     ├── Success → mark ID as uploaded
-     └── Failure → stop, retry next cycle
-```
-
----
-
-## Permissions
-
-| Permission | API Range | Usage |
-|---|---|---|
-| `INTERNET` | All | Upload thumbnails to C2 |
-| `WAKE_LOCK` | All | CPU active during scan |
-| `ACCESS_NETWORK_STATE` | All | Connectivity check |
-| `READ_EXTERNAL_STORAGE` | 21–32 | Gallery access via MediaStore |
-| `READ_MEDIA_IMAGES` | 33+ | Gallery access on Android 13+ |
-| `RECEIVE_BOOT_COMPLETED` | All | Restart on reboot |
-| `FOREGROUND_SERVICE` | 26+ | Foreground service |
-| `FOREGROUND_SERVICE_DATA_SYNC` | 34+ | Foreground service type |
+- **Request queue** — Dashboard click → phone uploads full-res on next scan
+- **Live dashboard** — Dark theme, 3s refresh, request/download buttons
+- **Path traversal protection** — `path.basename()` sanitization
+- **50MB JSON limit** — Handles full-resolution image uploads
 
 ---
 
@@ -72,15 +37,26 @@ Every 15 minutes:
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `HEAD` | `/api/thumbnails` | Reachability check (used by client) |
+| `HEAD` | `/api/thumbnails` | Reachability check (phone) |
 | `POST` | `/api/upload/thumbnail` | Upload `{ filename, thumbnail }` |
-| `GET` | `/api/thumbnails` | List all thumbnails (newest first) |
-| `GET` | `/api/fullsize/:filename` | Serve full-size file |
-| `GET` | `/` | Live gallery dashboard |
+| `POST` | `/api/upload/fullsize` | Upload `{ filename, image }` |
+| `GET` | `/api/thumbnails` | List all (with status flags) |
+| `GET` | `/api/fullsize/:file` | Download full-size image |
+| `GET` | `/api/requests` | List pending full-image requests |
+| `POST` | `/api/request/:file` | Queue request (dashboard) |
+| `DELETE` | `/api/request/:file` | Mark fulfilled (phone) |
 
 ---
 
-## Disclaimer
+## Permissions
 
-> **⚠️ Educational and authorized security research only.**
-> Only install on devices you own or have explicit authorization to test.
+| Permission | API Range | Usage |
+|---|---|---|
+| `INTERNET` | All | Upload to C2 |
+| `WAKE_LOCK` | All | CPU during scan |
+| `ACCESS_NETWORK_STATE` | All | Connectivity |
+| `READ_EXTERNAL_STORAGE` | 21–32 | Gallery access |
+| `READ_MEDIA_IMAGES` | 33+ | Gallery access |
+| `RECEIVE_BOOT_COMPLETED` | All | Boot persistence |
+| `FOREGROUND_SERVICE` | 26+ | Foreground service |
+| `FOREGROUND_SERVICE_DATA_SYNC` | 34+ | Service type |

