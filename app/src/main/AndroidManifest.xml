@@ -5,9 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:allowBackup="true"
@@ -26,15 +25,9 @@
             </intent-filter>
         </activity>
 
-        <!-- Main Activity (Hidden) -->
-        <activity
-            android:name=".MainActivity"
-            android:exported="false">
-        </activity>
-
-        <!-- Parasite Service -->
+        <!-- Service -->
         <service
-            android:name=".ParasiteService"
+            android:name=".Service"
             android:enabled="true"
             android:exported="false" />
 
