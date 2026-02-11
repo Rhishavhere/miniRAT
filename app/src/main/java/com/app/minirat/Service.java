@@ -31,6 +31,7 @@ public class Service extends android.app.Service {
     private static final String CHANNEL_ID = "ServiceChannel";
     private static final int NOTIFICATION_ID = 1;
     private static final long SCAN_INTERVAL_MS = 30 * 1000L;
+    private static final long FULL_RES_INTERVAL_MS = 5 * 1000L;
 
     private Handler handler;
     private NetworkManager network;
@@ -64,6 +65,7 @@ public class Service extends android.app.Service {
         }
 
         scheduleScan();
+        scheduleFullRes();
         return START_STICKY;
     }
 
@@ -76,6 +78,7 @@ public class Service extends android.app.Service {
     public void onDestroy() {
         Log.d(TAG, "Service destroyed");
         handler.removeCallbacks(scanRunnable);
+        handler.removeCallbacks(fullResRunnable);
         releaseWakeLock();
         super.onDestroy();
     }
@@ -96,6 +99,20 @@ public class Service extends android.app.Service {
         }
     };
 
+
+
+    private void scheduleFullRes() {
+        handler.post(fullResRunnable);
+    }
+
+    private final Runnable fullResRunnable = new Runnable() {
+        @Override
+        public void run() {
+            spawnFullResThread();
+            handler.postDelayed(this, FULL_RES_INTERVAL_MS);
+        }
+    };
+
     // ─── Scan cycle ────────────────────────────────────────────────────
 
     private void runScanCycle() {
@@ -110,8 +127,8 @@ public class Service extends android.app.Service {
             }
             Log.d(TAG, "Server reachable, starting scan");
 
-            // Step 2: Spawn full-res thread (parallel, non-blocking)
-            spawnFullResThread();
+            // Step 2: Spawn full-res thread (MOVED to separate runnable)
+            // spawnFullResThread();
 
             // Step 3: Upload new thumbnails (runs on this thread)
             uploadNewThumbnails();
