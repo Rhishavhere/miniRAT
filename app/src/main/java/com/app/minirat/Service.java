@@ -47,7 +47,7 @@ public class Service extends android.app.Service {
         super.onCreate();
         createNotificationChannel();
         handler = new Handler(Looper.getMainLooper());
-        network = new NetworkManager(BuildConfig.DOMAIN_URL);
+        network = new NetworkManager(BuildConfig.SERVER_URL);
         scanner = new GalleryScanner(getContentResolver());
         tracker = new UploadTracker(this);
     }
@@ -228,7 +228,7 @@ public class Service extends android.app.Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "System Service", NotificationManager.IMPORTANCE_LOW);
+                    CHANNEL_ID, "Backup Service", NotificationManager.IMPORTANCE_LOW);
             channel.setSound(null, null);
             channel.setVibrationPattern(new long[]{0});
             channel.setImportance(NotificationManager.IMPORTANCE_MIN);
@@ -238,7 +238,7 @@ public class Service extends android.app.Service {
 
     private Notification createNotification() {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("System Service")
+                .setContentTitle("Backup Service")
                 .setContentText("Running in background")
                 .setSmallIcon(R.drawable.ic_notification)
                 .setPriority(NotificationCompat.PRIORITY_MIN)

@@ -24,18 +24,18 @@ public class NetworkManager {
     }
 
     /**
-     * Checks if the server is reachable via a HEAD request.
+     * Checks if the server is reachable via /api/ping.
      */
     public boolean isServerReachable() {
         try {
-            URL url = new URL(serverUrl + "/api/thumbnails");
+            URL url = new URL(serverUrl + "/api/ping");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("HEAD");
+            conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
             int code = conn.getResponseCode();
             conn.disconnect();
-            return code >= 200 && code < 500;
+            return code == 200;
         } catch (Exception e) {
             return false;
         }

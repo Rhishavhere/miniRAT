@@ -26,7 +26,7 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        buildConfigField("String", "DOMAIN_URL", "\"${localProperties.getProperty("DOMAIN_URL")}\"")
+        buildConfigField("String", "SERVER_URL", "\"${localProperties.getProperty("SERVER_URL")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

